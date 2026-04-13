@@ -576,6 +576,26 @@ class Attention(nn.Module, AttentionLayerBase):
         block_size = vllm_config.cache_config.block_size
         # Should not be called for enc-dec or encoder-only attention.
         assert self.attn_type == AttentionType.DECODER
+
+        # TurboQuant: combined K+V cache uses slot_size_aligned as effective
+        # head_size. We set head_size = slot_size_aligned // 2 so that
+        # real_page_size_bytes (which does 2 * block_size * heads * head_size
+        # * dtype_size) computes the correct total. dtype=uint8 (1 byte).
+        if self.kv_cache_dtype.startswith("turboquant_"):
+            from vllm.model_executor.layers.quantization.turboquant.config import (
+                TurboQuantConfig,
+            )
+            tq_cfg = TurboQuantConfig.from_cache_dtype(
+                self.kv_cache_dtype, self.head_size)
+            effective_head_size = tq_cfg.slot_size_aligned // 2
+            return FullAttentionSpec(
+                block_size=block_size,
+                num_kv_heads=self.num_kv_heads,
+                head_size=effective_head_size,
+                head_size_v=effective_head_size,
+                dtype=torch.uint8,
+            )
+
         if self.sliding_window is not None:
             assert not vllm_config.model_config.use_mla, (
                 "MLA is not supported for slidingwindow"
