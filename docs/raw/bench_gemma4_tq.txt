@@ -1,0 +1,77 @@
+=== Benchmarking TQ k3v4_nc + suffix @ 49K ===
+URL: http://localhost:8001/v1/chat/completions
+Duration per level: 90s
+Concurrency levels: [1, 2, 4, 8, 12, 16]
+
+  C |    Tok/s |  Req/s |     Lat |   Tokens |  Reqs | Errs
+------------------------------------------------------------
+  1 |      7.7 |   0.04 |   23.2s |      718 |     4 |    0
+  2 |     13.8 |   0.07 |   25.2s |     1517 |     8 |    0
+  4 |     20.9 |   0.11 |   34.8s |     2315 |    12 |    0
+  8 |     27.0 |   0.14 |   47.6s |     3916 |    20 |    0
+ 12 |     33.8 |   0.17 |   54.0s |     5110 |    26 |    0
+ 16 |     36.3 |   0.19 |   66.5s |     6235 |    32 |    0
+
+JSON results:
+[
+  {
+    "concurrency": 1,
+    "tok_per_sec": 7.748187876389648,
+    "req_per_sec": 0.04316539206902311,
+    "avg_latency": 23.166657865047455,
+    "total_tokens": 718,
+    "total_requests": 4,
+    "errors": 0,
+    "duration": 92.66682887077332
+  },
+  {
+    "concurrency": 2,
+    "tok_per_sec": 13.780106078433446,
+    "req_per_sec": 0.07267030232529174,
+    "avg_latency": 25.225580990314484,
+    "total_tokens": 1517,
+    "total_requests": 8,
+    "errors": 0,
+    "duration": 110.0862352848053
+  },
+  {
+    "concurrency": 4,
+    "tok_per_sec": 20.870079199557832,
+    "req_per_sec": 0.10818183602362591,
+    "avg_latency": 34.75427963336309,
+    "total_tokens": 2315,
+    "total_requests": 12,
+    "errors": 0,
+    "duration": 110.92435145378113
+  },
+  {
+    "concurrency": 8,
+    "tok_per_sec": 26.972938782309242,
+    "req_per_sec": 0.13775760358687048,
+    "avg_latency": 47.61382806301117,
+    "total_tokens": 3916,
+    "total_requests": 20,
+    "errors": 0,
+    "duration": 145.1825487613678
+  },
+  {
+    "concurrency": 12,
+    "tok_per_sec": 33.76918237706791,
+    "req_per_sec": 0.1718197146387017,
+    "avg_latency": 53.972310368831344,
+    "total_tokens": 5110,
+    "total_requests": 26,
+    "errors": 0,
+    "duration": 151.32140135765076
+  },
+  {
+    "concurrency": 16,
+    "tok_per_sec": 36.29153659329928,
+    "req_per_sec": 0.1862596906151687,
+    "avg_latency": 66.48613692820072,
+    "total_tokens": 6235,
+    "total_requests": 32,
+    "errors": 0,
+    "duration": 171.8031415939331
+  }
+]

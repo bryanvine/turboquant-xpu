@@ -1,0 +1,88 @@
+=== Benchmarking Qwen3-30B-A3B + TQ k3v4_nc ===
+URL: http://localhost:8001/v1/chat/completions
+Duration per level: 90s
+Concurrency levels: [1, 2, 4, 8, 12, 16, 20]
+
+  C |    Tok/s |  Req/s |     Lat |   Tokens |  Reqs | Errs
+------------------------------------------------------------
+  1 |      8.7 |   0.05 |   21.9s |      951 |     5 |    0
+  2 |     17.4 |   0.09 |   21.1s |     1915 |    10 |    0
+  4 |     35.1 |   0.18 |   21.8s |     3915 |    20 |    0
+  8 |     63.1 |   0.32 |   22.5s |     6630 |    34 |    0
+ 12 |    106.0 |   0.55 |   21.4s |    11663 |    60 |    0
+ 16 |    140.0 |   0.72 |   21.7s |    15570 |    80 |    0
+ 20 |    141.1 |   0.72 |   26.5s |    15772 |    80 |    0
+
+JSON results:
+[
+  {
+    "concurrency": 1,
+    "tok_per_sec": 8.668662985682818,
+    "req_per_sec": 0.04557656669654479,
+    "avg_latency": 21.94106101989746,
+    "total_tokens": 951,
+    "total_requests": 5,
+    "errors": 0,
+    "duration": 109.7054991722107
+  },
+  {
+    "concurrency": 2,
+    "tok_per_sec": 17.408872663065555,
+    "req_per_sec": 0.09090795124316217,
+    "avg_latency": 21.092491960525514,
+    "total_tokens": 1915,
+    "total_requests": 10,
+    "errors": 0,
+    "duration": 110.00137901306152
+  },
+  {
+    "concurrency": 4,
+    "tok_per_sec": 35.13232122986328,
+    "req_per_sec": 0.17947545966724537,
+    "avg_latency": 21.841571629047394,
+    "total_tokens": 3915,
+    "total_requests": 20,
+    "errors": 0,
+    "duration": 111.43584775924683
+  },
+  {
+    "concurrency": 8,
+    "tok_per_sec": 63.13609842718136,
+    "req_per_sec": 0.32377486372913516,
+    "avg_latency": 22.52091578876271,
+    "total_tokens": 6630,
+    "total_requests": 34,
+    "errors": 0,
+    "duration": 105.01124024391174
+  },
+  {
+    "concurrency": 12,
+    "tok_per_sec": 106.0193957266675,
+    "req_per_sec": 0.5454140224299109,
+    "avg_latency": 21.406763450304666,
+    "total_tokens": 11663,
+    "total_requests": 60,
+    "errors": 0,
+    "duration": 110.00817275047302
+  },
+  {
+    "concurrency": 16,
+    "tok_per_sec": 140.00303869772833,
+    "req_per_sec": 0.719347661902265,
+    "avg_latency": 21.68937591910362,
+    "total_tokens": 15570,
+    "total_requests": 80,
+    "errors": 0,
+    "duration": 111.2118718624115
+  },
+  {
+    "concurrency": 20,
+    "tok_per_sec": 141.1366607480248,
+    "req_per_sec": 0.715884660147222,
+    "avg_latency": 26.54645166993141,
+    "total_tokens": 15772,
+    "total_requests": 80,
+    "errors": 0,
+    "duration": 111.74984526634216
+  }
+]
