@@ -13,18 +13,29 @@ TurboQuant compresses the KV cache to 3-4 bits per element using Walsh-Hadamard 
 
 ## Status
 
-**Phase 1: In Progress** — Validating Triton kernel compilation on XPU
+**Working end-to-end on Intel Arc Pro B70.** TurboQuant serves Gemma4-31B and Qwen3-30B-A3B with `--kv-cache-dtype turboquant_k3v4_nc` on vLLM 0.19.0 + Intel Triton XPU backend.
+
+### Results snapshot
+
+| Model | KV capacity vs FP16 | Peak throughput vs FP16 | Notes |
+|---|---|---|---|
+| **Qwen3-30B-A3B** (MoE, head_dim=128) | **~8.5×** | 0.47× | MoE sparsity + GQA + small head_dim = best TQ fit |
+| **Gemma4-31B** (dense, head_dim=256/512) | 4.83× | 0.27× | Heterogeneous head_dims hurt compression and speed |
+
+See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BENCHMARK_QWEN3_30B.md](docs/BENCHMARK_QWEN3_30B.md) (Qwen3-30B).
+
+### Component status
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Quantizer (config, centroids, WHT) | Portable | Pure PyTorch, no changes needed |
-| Store kernel (`_tq_fused_store_mse`) | Needs testing | Triton → SPIRV compilation |
-| Store kernel (`_tq_fused_store_fp8`) | Needs testing | FP8 type handling on XPU |
-| Decode kernel (`_tq_decode_stage1`) | Needs testing | Critical path, performance-sensitive |
-| Stage 2 reduction | Portable | Standard Triton, no CUDA intrinsics |
-| Full dequant kernel | Needs testing | Used for continuation prefill |
-| Attention backend | Needs XPU adaptation | CUDA stream/graph code paths |
-| vLLM integration patches | Not started | Config registration, mount points |
+| Quantizer (config, centroids, WHT) | ✅ Working | Pure PyTorch, 27/27 unit tests pass |
+| Store kernels (MSE + FP8) | ✅ Working | Triton → SPIRV on Intel XPU, zero modifications |
+| Decode stage1 (critical path) | ✅ Working | Performance-sensitive, tuning in progress |
+| Stage 2 reduction | ✅ Working | Standard Triton, portable |
+| Full dequant (continuation prefill) | ✅ Working | Correct on XPU |
+| Attention backend | ✅ Working | Two XPU-specific fixes (SDPA prefill, KV cache spec) |
+| vLLM integration patches | ✅ Working | 8 files mount-patched into stock container |
+| Custom SYCL kernels | 🚧 Proposed | See [issue #271](https://github.com/vllm-project/vllm-xpu-kernels/issues/271) |
 
 ## Architecture
 
@@ -124,6 +135,7 @@ See [patches/README.md](patches/README.md) for mount-point instructions.
 - [vLLM PR #38479](https://github.com/vllm-project/vllm/pull/38479) — Upstream implementation
 - [Intel XPU Triton backend](https://github.com/intel/intel-xpu-backend-for-triton)
 - [scos-lab/turboquant](https://github.com/scos-lab/turboquant) — Pure NumPy reference
+- [vllm-xpu-kernels issue #271](https://github.com/vllm-project/vllm-xpu-kernels/issues/271) — my feasibility report + optimization plan proposal to Intel
 
 ## License
 
