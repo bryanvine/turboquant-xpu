@@ -24,6 +24,15 @@ TurboQuant compresses the KV cache to 3-4 bits per element using Walsh-Hadamard 
 
 See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BENCHMARK_QWEN3_30B.md](docs/BENCHMARK_QWEN3_30B.md) (Qwen3-30B).
 
+### R&D documents
+
+- [`docs/XPU_PORTING_ANALYSIS.md`](docs/XPU_PORTING_ANALYSIS.md) — pre-port analysis of every CUDA-specific code path, risk-rated with XPU workarounds
+- [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md) — full benchmark data on Gemma4-31B (dense, worst-case for TQ)
+- [`docs/BENCHMARK_QWEN3_30B.md`](docs/BENCHMARK_QWEN3_30B.md) — Qwen3-30B-A3B MoE benchmark (8.5× KV capacity)
+- [`docs/SYCL_KERNEL_DESIGN.md`](docs/SYCL_KERNEL_DESIGN.md) — 2000-word design brief for native SYCL kernels on Xe2/BMG-G31
+- [`docs/QWEN35_EXPLORATION.md`](docs/QWEN35_EXPLORATION.md) — analysis of whether TurboQuant unblocks Qwen3.5 (answer: orthogonal, but the SYCL research transfers)
+- [`docs/vllm_xpu_kernels_issue_271.md`](docs/vllm_xpu_kernels_issue_271.md) — mirror of my feasibility report filed with Intel
+
 ### Component status
 
 | Component | Status | Notes |
