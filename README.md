@@ -26,6 +26,7 @@ See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BE
 
 ### R&D documents
 
+- [`docs/PROJECT_NARRATIVE.md`](docs/PROJECT_NARRATIVE.md) — the research narrative: what I built, what worked, what didn't, what I learned
 - [`docs/XPU_PORTING_ANALYSIS.md`](docs/XPU_PORTING_ANALYSIS.md) — pre-port analysis of every CUDA-specific code path, risk-rated with XPU workarounds
 - [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md) — full benchmark data on Gemma4-31B (dense, worst-case for TQ)
 - [`docs/BENCHMARK_QWEN3_30B.md`](docs/BENCHMARK_QWEN3_30B.md) — Qwen3-30B-A3B MoE benchmark (8.5× KV capacity)
