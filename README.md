@@ -1,5 +1,7 @@
 # turboquant-xpu
 
+![Solving TurboQuant for Intel XPU](docs/turboquant%20xpu.png)
+
 Port of [TurboQuant](https://arxiv.org/abs/2504.19874) KV cache quantization to Intel XPU for vLLM.
 
 TurboQuant compresses the KV cache to 3-4 bits per element using Walsh-Hadamard rotation + Lloyd-Max scalar quantization, achieving **4-5x compression** over FP16 with minimal quality loss. This enables significantly longer context windows and higher concurrency on memory-constrained GPUs.
