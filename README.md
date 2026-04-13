@@ -30,6 +30,7 @@ See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BE
 - [`docs/XPU_PORTING_ANALYSIS.md`](docs/XPU_PORTING_ANALYSIS.md) — pre-port analysis of every CUDA-specific code path, risk-rated with XPU workarounds
 - [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md) — full benchmark data on Gemma4-31B (dense, worst-case for TQ)
 - [`docs/BENCHMARK_QWEN3_30B.md`](docs/BENCHMARK_QWEN3_30B.md) — Qwen3-30B-A3B MoE benchmark (8.5× KV capacity)
+- [`docs/CROSS_MODEL_COMPARISON.md`](docs/CROSS_MODEL_COMPARISON.md) — why model architecture drives TurboQuant performance (Gemma4 vs Qwen3-30B)
 - [`docs/SYCL_KERNEL_DESIGN.md`](docs/SYCL_KERNEL_DESIGN.md) — 2000-word design brief for native SYCL kernels on Xe2/BMG-G31
 - [`docs/QWEN35_EXPLORATION.md`](docs/QWEN35_EXPLORATION.md) — analysis of whether TurboQuant unblocks Qwen3.5 (answer: orthogonal, but the SYCL research transfers)
 - [`docs/vllm_xpu_kernels_issue_271.md`](docs/vllm_xpu_kernels_issue_271.md) — mirror of my feasibility report filed with Intel
