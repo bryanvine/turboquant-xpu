@@ -101,6 +101,28 @@ Trivial. One block-reduce + log-sum-exp per (batch, head). Triton handles this a
 - **Intel sycl-tla (CUTLASS-SYCL)** already ships FA-v2 prefill + decode with optional FP8 KV. Its fused-FP8-descale step is the closest existing reference for TurboQuant's fused centroid-dequant. ([intel/sycl-tla](https://github.com/intel/sycl-tla))
 - **FlashAttention with bit-packed KV in SYCL:** none found. The closest is llama.cpp's SYCL Q4_K_M kernel, which is notoriously 4× faster than its Q8_0 kernel on B70 — a known bit-unpack efficiency story that validates the thesis that handwritten bit-level SYCL can beat more naive code paths by large factors ([llama.cpp #21517](https://github.com/ggml-org/llama.cpp/issues/21517)).
 
+## Updated priors (2026-04-14)
+
+After running the quick-wins experiment (`QUICK_WINS_RESULTS.md`), the design picture sharpens:
+
+**For `k8v4` (FP8 keys, 4-bit values):** tile tuning gives zero improvement (V1 = 82.9 tok/s, V3 with `BLOCK_KV=16 + num_warps=4` = 83.0 tok/s, within noise). The kernel is already tight in the Triton path. Native SYCL wins would need to come from:
+
+- **Eliminating attention-op dispatch overhead** — Python → Triton launch sequence adds measurable time per decode step on XPU
+- **SLM-staged tile batching** — prefetch BLOCK_KV slots into SLM so all queries in a WG share the reconstructed K tile
+- **DPAS with M>1 head tiling** — only relevant if there are multiple Q heads per WG (GQA helps here)
+
+**For `k3v4_nc` (3-bit MSE keys):** tile tuning gave 2.14× over defaults. The remaining headroom for native SYCL on this path:
+
+- **Fuse the Q·PiT rotation GEMM** into stage1 (eliminates one kernel launch per attention call)
+- **Fuse centroid LUT into the DPAS operand pipeline** (mirror of Intel's fused FP8 descale in flash-attn)
+- **Unroll the N_CENTROIDS loop** explicitly — compiler doesn't aggressively unroll it in Triton-generated SPIRV
+
+Realistic expectation from these updates:
+- k8v4 SYCL port: probably only 1.2-1.5× over tuned Triton (Triton already did the cheap wins)
+- k3v4_nc SYCL port: 2-3× over tuned Triton (more remaining inefficiencies)
+
+**Strategic implication:** the SYCL port's value is primarily in closing the gap for `k3v4_nc` (the maximum-compression preset), not in squeezing `k8v4`. Users who want maximum throughput should use `k8v4` + Triton today; users who need maximum KV compression would be the primary beneficiaries of a SYCL `k3v4_nc` implementation.
+
 ## Honest unknowns
 
 - Precise BMG-G31 L2 size is not publicly confirmed beyond "larger than B580's 18 MB" being likely.

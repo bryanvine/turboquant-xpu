@@ -33,12 +33,13 @@ Not yet tested: Qwen3-30B with `k8v4`. Expected improvement based on Gemma4 tren
 
 All 6 TurboQuant kernels ported cleanly via Intel's Triton → SPIRV backend. No patched ops, no workarounds needed. This suggests Intel's Triton XPU backend is much more capable than the ecosystem's "Intel is 18 months behind NVIDIA" reputation implies.
 
-### 2. Preset choice matters more than kernel tuning
+### 2. Preset choice matters more than kernel tuning, and tuning is path-dependent
 
 `k8v4` vs `k3v4_nc` on Gemma4: **3.07× throughput**.
-`BLOCK_KV=16 + num_warps=4` vs defaults on Gemma4+k3v4_nc: **2.14× throughput**.
+`BLOCK_KV=16 + num_warps=4` on `k3v4_nc`: **2.14× throughput**.
+`BLOCK_KV=16 + num_warps=4` on `k8v4`: **1.00× (no change)**.
 
-Both help, but preset change is the cheaper and bigger win. The combined tuning+preset numbers are in `QUICK_WINS_RESULTS.md`.
+Preset change is the cheaper and bigger win. And crucially, the two TQ paths have different bottleneck profiles: MSE (k3v4_nc) is compute-bound and tuning helps; FP8 (k8v4) is memory- or launch-bound and tile tuning gives nothing. This is actionable information for where to invest further kernel work — see `QUICK_WINS_RESULTS.md` for the analysis.
 
 ### 3. Architecture determines whether TurboQuant is worth it
 
