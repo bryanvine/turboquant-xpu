@@ -16,7 +16,7 @@ find_package(pybind11 REQUIRED CONFIG)
 #   -DVLLM_XPU_AOT_DEVICES=intel_gpu_bmg_g21 on the cmake command line.
 # Set to empty string to force JIT compilation (no `ocloc` needed).
 if(NOT DEFINED VLLM_XPU_AOT_DEVICES)
-  set(VLLM_XPU_AOT_DEVICES "intel_gpu_bmg_g21" CACHE STRING "AOT target list for SYCL build")
+  set(VLLM_XPU_AOT_DEVICES "intel_gpu_bmg_g31" CACHE STRING "AOT target list for SYCL build")
 endif()
 
 set(SYCL_FLAGS
@@ -41,7 +41,7 @@ pybind11_add_module(turboquant_xpu_sycl
   src/tq_decode_spec_py.cpp
 )
 
-target_include_directories(turboquant_xpu_sycl PRIVATE include)
+target_include_directories(turboquant_xpu_sycl PRIVATE include src)
 target_compile_options(turboquant_xpu_sycl PRIVATE ${SYCL_FLAGS} ${SPV_EXTS})
 target_link_options(turboquant_xpu_sycl PRIVATE
   ${SYCL_FLAGS}
