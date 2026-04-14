@@ -35,9 +35,35 @@ from vllm.v1.attention.ops.triton_turboquant_decode import (
 )
 from vllm.v1.attention.ops.triton_turboquant_store import triton_turboquant_store
 
+# Fused spec-verify kernel: handles all N_spec queries in a single Triton
+# launch with causal masking per query (query n sees cached_len+n+1 tokens).
+# Falls back to looped path when TQ_USE_FUSED_SPEC=0 or q_len is outside
+# the range supported by the kernel (1 < q_len <= 8).
+# Import is conditional: the fused kernel lives in turboquant_xpu (local src),
+# not in vllm, so it may not be present in all deployment configurations.
+try:
+    from turboquant_xpu.kernels.xpu_decode import (
+        triton_turboquant_decode_attention_spec_xpu as _decode_attention_spec_fused,
+    )
+    _FUSED_SPEC_AVAILABLE = True
+except ImportError:
+    _decode_attention_spec_fused = None  # type: ignore[assignment]
+    _FUSED_SPEC_AVAILABLE = False
+
 # CUDA stream overlap: disabled by default — degrades TTFT under concurrent
 # load (489ms vs 338ms). Enable via TQ_STREAM_OVERLAP=1 for experimentation.
 _USE_STREAM_OVERLAP = os.environ.get("TQ_STREAM_OVERLAP", "0") == "1"
+
+# Fused spec-verify dispatch gate.
+# Set TQ_USE_FUSED_SPEC=0 to force the legacy per-token looped path.
+# Defaults to enabled so that spec-verify continuation chunks route to the
+# fused kernel automatically when 1 < q_len <= 8 and the kernel is available.
+_USE_FUSED_SPEC: bool = os.getenv("TQ_USE_FUSED_SPEC", "1") == "1"
+
+# Maximum N_spec the fused kernel supports without recompilation.
+# Triton constexpr N_SPEC=8 is hardcoded in autotune winners; larger values
+# require a new autotune sweep and may not fit in register budget.
+_FUSED_SPEC_MAX_QLEN: int = 8
 
 # Continuation prefill: for small continuation chunks (q_len ≤ threshold),
 # use the TQ decode kernel directly instead of full-dequant + flash_attn.
@@ -612,30 +638,74 @@ class TurboQuantAttentionImpl(AttentionImpl["TurboQuantMetadata"]):
                 # For large continuations, fall back to _continuation_prefill.
                 cached_len = seq_len - q_len
                 if q_len <= _CONTINUATION_DECODE_THRESHOLD:
-                    # Fast path: treat each query as a decode request
-                    # with incremental seq_lens for causal masking.
-                    synth_seq_lens = torch.arange(
-                        cached_len + 1,
-                        seq_len + 1,
-                        device=query.device,
-                        dtype=attn_metadata.seq_lens.dtype,
+                    # Spec-verify continuation: choose fused or looped path.
+                    #
+                    # Fused path: single Triton kernel launch handles all q_len
+                    # speculative queries together, with per-query causal masking
+                    # (query n sees cached_len+n+1 tokens). Requires q_len > 1
+                    # (q_len==1 is identical to decode; no fusion benefit) and
+                    # q_len <= _FUSED_SPEC_MAX_QLEN (kernel constexpr limit).
+                    #
+                    # Looped path: one triton_turboquant_decode_attention call per
+                    # query with synthetic seq_lens. This is the original approach.
+                    use_fused = (
+                        _USE_FUSED_SPEC
+                        and _FUSED_SPEC_AVAILABLE
+                        and 1 < q_len <= _FUSED_SPEC_MAX_QLEN
                     )
-                    synth_bt = attn_metadata.block_table[i : i + 1].expand(q_len, -1)
-                    out = triton_turboquant_decode_attention(
-                        query=q_seq,
-                        kv_cache=kv_cache,
-                        block_table=synth_bt,
-                        seq_lens=synth_seq_lens,
-                        Pi=Pi,
-                        centroids=centroids,
-                        scale=self.scale,
-                        mse_bits=self.tq_config.key_mse_bits,
-                        key_packed_size=self.tq_config.key_packed_size,
-                        value_quant_bits=(self.tq_config.effective_value_quant_bits),
-                        key_fp8=self.tq_config.key_fp8,
-                        norm_correction=self.tq_config.norm_correction,
-                        PiT=PiT,
-                    )
+                    if use_fused:
+                        # Reshape: (q_len, Hq, D) -> (N_spec=q_len, B=1, Hq, D)
+                        q_spec = q_seq.unsqueeze(1)  # (q_len, 1, Hq, D)
+                        bt_single = attn_metadata.block_table[i : i + 1]  # (1, max_blocks)
+                        sl_single = torch.tensor(
+                            [seq_len],
+                            device=query.device,
+                            dtype=attn_metadata.seq_lens.dtype,
+                        )
+                        out_spec = _decode_attention_spec_fused(
+                            query=q_spec,
+                            kv_cache=kv_cache,
+                            block_table=bt_single,
+                            seq_lens=sl_single,
+                            Pi=Pi,
+                            centroids=centroids,
+                            scale=self.scale,
+                            mse_bits=self.tq_config.key_mse_bits,
+                            key_packed_size=self.tq_config.key_packed_size,
+                            value_quant_bits=self.tq_config.effective_value_quant_bits,
+                            key_fp8=self.tq_config.key_fp8,
+                            norm_correction=self.tq_config.norm_correction,
+                            PiT=PiT,
+                            causal=True,
+                            cached_len=cached_len,
+                        )
+                        # out_spec: (N_spec=q_len, B=1, Hq, D) -> (q_len, Hq, D)
+                        out = out_spec.squeeze(1)
+                    else:
+                        # Looped path: treat each query as a decode request
+                        # with incremental seq_lens for causal masking.
+                        synth_seq_lens = torch.arange(
+                            cached_len + 1,
+                            seq_len + 1,
+                            device=query.device,
+                            dtype=attn_metadata.seq_lens.dtype,
+                        )
+                        synth_bt = attn_metadata.block_table[i : i + 1].expand(q_len, -1)
+                        out = triton_turboquant_decode_attention(
+                            query=q_seq,
+                            kv_cache=kv_cache,
+                            block_table=synth_bt,
+                            seq_lens=synth_seq_lens,
+                            Pi=Pi,
+                            centroids=centroids,
+                            scale=self.scale,
+                            mse_bits=self.tq_config.key_mse_bits,
+                            key_packed_size=self.tq_config.key_packed_size,
+                            value_quant_bits=(self.tq_config.effective_value_quant_bits),
+                            key_fp8=self.tq_config.key_fp8,
+                            norm_correction=self.tq_config.norm_correction,
+                            PiT=PiT,
+                        )
                 else:
                     # Large continuation: dequant cached K/V and use
                     # flash_attn for better throughput.

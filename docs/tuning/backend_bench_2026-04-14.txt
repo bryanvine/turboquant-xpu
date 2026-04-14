@@ -1,0 +1,36 @@
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+Backend integration bench — causal spec-verify path
+Shape: N_spec=8, B(bench)=1 request, Hq=32, Hk=4, D=128, seqlen=8192
+Warmup=5, N_timed=20
+
+preset              path        ms/call   speedup
+--------------------------------------------------
+turboquant_k8v4     looped        3.140     1.00x
+turboquant_k8v4     fused         2.934     1.07x
+turboquant_k3v4_nc  looped        3.992     1.00x
+turboquant_k3v4_nc  fused         1.955     2.04x
+
+Reference micro-bench speedups (kernel-only, bench_fused_nspec.py causal mode):
+  k8v4 causal:    2.75x
+  k3v4_nc causal: 2.99x
+
+Backend-integration speedups (including Python boundary overhead):
+  turboquant_k8v4: 1.07x
+  turboquant_k3v4_nc: 2.04x
