@@ -178,3 +178,20 @@ def ref_decode_spec_batch(q_spec: np.ndarray, cache: TQCache, *, preset: str) ->
     N_spec = q_spec.shape[0]
     outs = [ref_decode_single_query(q_spec[n], cache, preset=preset) for n in range(N_spec)]
     return np.stack(outs, axis=0)
+
+
+def pack_cache_for_kernel(cache: TQCache):
+    """Flatten a reference TQCache into the raw arrays the SYCL kernel expects.
+
+    PoC layout is unpacked for clarity — 1 uint8 per centroid/value index. The
+    production SYCL kernel will take bit-packed bytes; we bridge that later.
+    """
+    k_idx = cache.k_idx.astype(np.uint8) if cache.k_idx is not None else np.zeros(1, dtype=np.uint8)
+    k_norm = cache.k_norm.astype(np.float32) if cache.k_norm is not None else np.zeros(1, dtype=np.float32)
+    k_fp8 = cache.k_fp8.astype(np.float32) if cache.k_fp8 is not None else np.zeros(1, dtype=np.float32)
+    v_idx = cache.v_idx.astype(np.uint8)
+    v_scale = cache.v_scale.astype(np.float32)
+    v_zero = cache.v_zero.astype(np.float32)
+    centroids = cache.centroids.astype(np.float32)
+    return dict(k_idx=k_idx, k_norm=k_norm, k_fp8=k_fp8, v_idx=v_idx,
+                v_scale=v_scale, v_zero=v_zero, centroids=centroids)
