@@ -1,7 +1,9 @@
-# Torch XPU build — comes from Intel's PyPI index, installed with --index-url below
+# Torch XPU build — install with `--index-url` per docs/SYCL_POC_BUILD.md.
+# Tested on Python 3.13 via https://download.pytorch.org/whl/xpu (upstream).
+# Intel's own mirror at pytorch-extension.intel.com had no 3.13 wheels as of 2026-04.
 torch==2.8.0+xpu
-# Intel Triton (ships in Intel's torch-xpu wheel bundle for 2.8+)
-# pytest + numpy for the test harness
+# Intel Triton ships inside the torch-xpu wheel bundle from 2.8+ — no separate pin needed.
+# pytest + numpy for the test harness; pybind11 for the SYCL module build (CMake config).
 pytest>=7.0
 numpy>=1.24
 pybind11>=2.11
