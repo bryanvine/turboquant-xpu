@@ -1,8 +1,25 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <sycl/sycl.hpp>
 #include "tq_decode_spec.hpp"
 
 namespace py = pybind11;
+
+// Forward decl from the DPAS TU
+namespace turboquant_xpu_sycl {
+void joint_matrix_smoke(const sycl::half* A, const sycl::half* B, float* C);
+}
+
+py::array_t<float> joint_matrix_smoke_py(
+    py::array_t<uint16_t, py::array::c_style | py::array::forcecast> A,  // fp16 passed as uint16
+    py::array_t<uint16_t, py::array::c_style | py::array::forcecast> B) {
+  auto out = py::array_t<float>({8, 16});
+  turboquant_xpu_sycl::joint_matrix_smoke(
+    (const sycl::half*)A.request().ptr,
+    (const sycl::half*)B.request().ptr,
+    (float*)out.request().ptr);
+  return out;
+}
 
 py::array_t<float> hello_identity_py(py::array_t<float, py::array::c_style | py::array::forcecast> x) {
   auto in = x.unchecked<1>();
@@ -100,6 +117,7 @@ py::array_t<float> tq_decode_spec_dpas_py(
 
 PYBIND11_MODULE(turboquant_xpu_sycl, m) {
   m.doc() = "SYCL TurboQuant decode-spec PoC";
+  m.def("joint_matrix_smoke", &joint_matrix_smoke_py, "8x16x16 fp16 GEMM DPAS smoke");
   m.def("hello_identity", &hello_identity_py, "Device-round-trip identity");
   m.def("hello_scale",    &hello_scale_py,    "Device-round-trip scalar multiply");
   m.def("tq_decode_spec_scalar", &tq_decode_spec_scalar_py, "Scalar SYCL tq_decode_spec");
