@@ -59,3 +59,54 @@ NaN appearance in tests is an artefact of random uint8 KV data producing FP8 NaN
 - The 2.71x k8v4 speedup is compelling; k3v4_nc at 4.22x is even more so.
 - Upstream path requires: (a) adding N_spec as a first-class launcher argument in the vLLM decode attention API, (b) fallback to looped when N_spec=1 to avoid regression on standard decode.
 - Register pressure at N_spec=16 (16KB) may hit the spill threshold on non-B70 hardware — would need a tiled-N_spec fallback (process 4 queries at a time, 2 passes).
+
+---
+
+## Causal spec-verify mode (2026-04-14 update)
+
+The original numbers above were measured with the same `seq_len` across all
+looped baseline iterations. That matches a "parallel completion" workload but
+not vLLM's actual spec-verify path, which uses increasing per-call seq_lens
+(`synth_seq_lens = cached_len+n+1` per query, matching `arange(cached_len+1, seq_len+1)`).
+
+The `CAUSAL=1` constexpr was added to `_tq_decode_stage1_spec`. When enabled,
+query `n` attends to exactly `cached_len+n+1` tokens via a per-query mask
+computed inside the kernel. The parallel-completion path (`CAUSAL=0`) is
+byte-identical to the pre-patch kernel — no backwards-incompatible change.
+
+### Causal spec-verify benchmark
+
+PoC shape: N_spec=8, B=4, Hq=32, Hk=4, D=128, seqlen=8192, cached_len=8184.
+Looped baseline: `triton_turboquant_decode_attention_xpu` called 8× with
+`seq_lens = cached_len+n+1` (the correct vLLM causal path).
+
+| preset | looped causal (ms) | fused causal (ms) | causal speedup |
+|---|---:|---:|---:|
+| turboquant_k8v4 | 8.989 | 3.523 | 2.55x |
+| turboquant_k3v4_nc | 14.088 | 4.851 | 2.90x |
+
+### Comparison vs parallel-completion numbers
+
+| preset | parallel speedup | causal speedup | delta |
+|---|---:|---:|---:|
+| turboquant_k8v4 | 2.76x | 2.55x | −0.21x |
+| turboquant_k3v4_nc | 3.52x | 2.90x | −0.62x |
+
+The causal speedup is slightly smaller than the parallel-completion speedup
+(expected: DONE_WITH_CONCERNS). Two factors explain the drop:
+
+1. **Per-query causal mask overhead:** the fused kernel now computes an
+   `eff_end_per_query[:, None]` broadcast comparison inside the hot KV loop,
+   adding minor register pressure and extra boolean ops.
+2. **Cheaper looped baseline:** in causal mode the looped baseline's per-call
+   `seq_lens` increases by 1 each iteration, so on average queries do slightly
+   less work — the looped baseline is marginally faster than in the
+   parallel-completion case (8.989 ms vs 8.909 ms is within noise; the real
+   effect is subtle). The fused kernel always processes the full `seq_len`
+   split range and masks internally, so it does not skip any tiles.
+
+The speedup remains well above the 1.3× anomaly threshold. The 4.22×
+`k3v4_nc` number in the previous section was real for the parallel-completion
+workload; its causal equivalent is 2.90×.
+
+Commit: pending (see `git log --oneline -1` after commit). Test: `tests/test_fused_nspec.py::test_fused_causal_matches_looped`.

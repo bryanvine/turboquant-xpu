@@ -96,3 +96,87 @@ def test_fused_matches_looped(preset, key_fp8, nc):
         )
     max_err = (out_fused[valid] - out_loop[valid]).abs().max().item() if valid.any() else 0.0
     print(f"PASS: {preset}  max_abs_err={max_err:.6f}  nan_pct={100*out_loop.isnan().float().mean().item():.1f}%")
+
+
+@pytest.mark.parametrize("preset,key_fp8,nc", [
+    ("turboquant_k8v4", True, False),
+    ("turboquant_k3v4_nc", False, True),
+])
+def test_fused_causal_matches_looped(preset, key_fp8, nc):
+    """Causal spec-verify: fused(causal=True) matches looped-with-synth-seq-lens.
+
+    The looped baseline calls the single-query kernel N_spec times, each time
+    with seq_lens = cached_len + n + 1 (increasing by 1 per speculative step).
+    This is the correct causal masking for spec-verify in vLLM.
+
+    The fused causal kernel must produce bit-close results in a single dispatch.
+    """
+    N_spec, B, Hq, Hk, D, seqlen = 4, 2, 8, 2, 128, 512   # small shape
+    cached_len = seqlen - N_spec  # 508: queries see 509, 510, 511, 512 tokens
+
+    cfg = TurboQuantConfig.from_cache_dtype(preset, D)
+    num_blocks = math.ceil(seqlen / 16) * B
+    kv_cache = torch.randint(
+        0, 255,
+        (num_blocks, 16, Hk, cfg.slot_size_aligned),
+        dtype=torch.uint8,
+        device=DEVICE,
+    )
+    block_table = torch.arange(num_blocks, dtype=torch.int32, device=DEVICE).reshape(B, -1)
+    seq_lens_full = torch.full((B,), seqlen, dtype=torch.int32, device=DEVICE)
+    q_spec = torch.randn(N_spec, B, Hq, D, device=DEVICE)
+    PiT = build_hadamard(D)
+    Pi = PiT.T.contiguous()
+    cents = torch.randn(cfg.n_centroids, device=DEVICE) * 0.3
+    scale = 1.0 / math.sqrt(D)
+
+    # Looped baseline: per-query synth seq_lens (the vLLM causal path)
+    out_loop = torch.stack([
+        triton_turboquant_decode_attention_xpu(
+            query=q_spec[n],
+            kv_cache=kv_cache,
+            block_table=block_table,
+            seq_lens=torch.full((B,), cached_len + n + 1, dtype=torch.int32, device=DEVICE),
+            Pi=Pi,
+            centroids=cents,
+            scale=scale,
+            mse_bits=cfg.mse_bits,
+            key_packed_size=cfg.key_packed_size,
+            value_quant_bits=cfg.value_quant_bits,
+            key_fp8=key_fp8,
+            norm_correction=nc,
+            PiT=PiT,
+        )
+        for n in range(N_spec)
+    ], dim=0)
+
+    # Fused causal: single dispatch
+    out_fused = triton_turboquant_decode_attention_spec_xpu(
+        query=q_spec,
+        kv_cache=kv_cache,
+        block_table=block_table,
+        seq_lens=seq_lens_full,
+        Pi=Pi,
+        centroids=cents,
+        scale=scale,
+        mse_bits=cfg.mse_bits,
+        key_packed_size=cfg.key_packed_size,
+        value_quant_bits=cfg.value_quant_bits,
+        key_fp8=key_fp8,
+        norm_correction=nc,
+        PiT=PiT,
+        causal=True,
+        cached_len=cached_len,
+    )
+
+    assert out_fused.shape == out_loop.shape, (
+        f"Shape mismatch: fused={out_fused.shape} loop={out_loop.shape}"
+    )
+    assert (out_fused.isnan() == out_loop.isnan()).all(), "NaN location mismatch"
+    valid = ~out_loop.isnan()
+    if valid.any():
+        torch.testing.assert_close(
+            out_fused[valid], out_loop[valid], atol=5e-3, rtol=1e-2
+        )
+    max_err = (out_fused[valid] - out_loop[valid]).abs().max().item() if valid.any() else 0.0
+    print(f"PASS causal: {preset}  max_abs_err={max_err:.6f}  nan_pct={100*out_loop.isnan().float().mean().item():.1f}%")

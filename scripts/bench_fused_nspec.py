@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Fused-N_spec Triton kernel vs looped baseline at PoC shape."""
+"""Fused-N_spec Triton kernel vs looped baseline at PoC shape.
+
+Two tables are printed:
+  1. Parallel-completion: looped-same-seqlen vs fused (causal=False) — original numbers.
+  2. Causal spec-verify:  looped-synth-seqlens vs fused (causal=True) — new numbers.
+"""
 import math
 import sys
 import os
@@ -24,6 +29,7 @@ HQ = 32
 HK = 4
 D = 128
 SEQLEN = 8192
+CACHED_LEN = SEQLEN - N_SPEC  # 8184 for causal bench
 BLOCK_SIZE = 16
 MAX_NUM_KV_SPLITS = 32
 WARMUP = 5
@@ -56,7 +62,12 @@ def setup(preset):
     return cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, scale
 
 
+# ---------------------------------------------------------------------------
+# Parallel-completion helpers (original)
+# ---------------------------------------------------------------------------
+
 def time_looped(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, scale, key_fp8, nc):
+    """Looped baseline: N_spec calls with the SAME seq_lens (parallel-completion)."""
     key_fn = lambda n: triton_turboquant_decode_attention_xpu(
         query=q_spec[n],
         kv_cache=kv_cache,
@@ -74,13 +85,11 @@ def time_looped(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, sc
         max_num_kv_splits=MAX_NUM_KV_SPLITS,
     )
 
-    # Warmup
     for _ in range(WARMUP):
         for n in range(N_SPEC):
             key_fn(n)
     torch.xpu.synchronize()
 
-    # Timed runs
     elapsed = []
     for _ in range(N_TIMED):
         t0 = time.perf_counter()
@@ -93,6 +102,7 @@ def time_looped(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, sc
 
 
 def time_fused(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, scale, key_fp8, nc):
+    """Fused kernel: single dispatch, causal=False (parallel-completion)."""
     def fused_fn():
         return triton_turboquant_decode_attention_spec_xpu(
             query=q_spec,
@@ -111,12 +121,87 @@ def time_fused(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, sca
             max_num_kv_splits=MAX_NUM_KV_SPLITS,
         )
 
-    # Warmup
     for _ in range(WARMUP):
         fused_fn()
     torch.xpu.synchronize()
 
-    # Timed runs
+    elapsed = []
+    for _ in range(N_TIMED):
+        t0 = time.perf_counter()
+        fused_fn()
+        torch.xpu.synchronize()
+        elapsed.append((time.perf_counter() - t0) * 1000)
+
+    return sum(elapsed) / len(elapsed)
+
+
+# ---------------------------------------------------------------------------
+# Causal spec-verify helpers (new)
+# ---------------------------------------------------------------------------
+
+def time_looped_causal(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, scale, key_fp8, nc):
+    """Looped baseline: N_spec calls with increasing synth seq_lens (causal spec-verify)."""
+    def call_n(n):
+        synth = torch.full((B,), CACHED_LEN + n + 1, dtype=torch.int32, device=DEVICE)
+        return triton_turboquant_decode_attention_xpu(
+            query=q_spec[n],
+            kv_cache=kv_cache,
+            block_table=block_table,
+            seq_lens=synth,
+            Pi=Pi,
+            centroids=cents,
+            scale=scale,
+            mse_bits=cfg.mse_bits,
+            key_packed_size=cfg.key_packed_size,
+            value_quant_bits=cfg.value_quant_bits,
+            key_fp8=key_fp8,
+            norm_correction=nc,
+            PiT=PiT,
+            max_num_kv_splits=MAX_NUM_KV_SPLITS,
+        )
+
+    for _ in range(WARMUP):
+        for n in range(N_SPEC):
+            call_n(n)
+    torch.xpu.synchronize()
+
+    elapsed = []
+    for _ in range(N_TIMED):
+        t0 = time.perf_counter()
+        for n in range(N_SPEC):
+            call_n(n)
+        torch.xpu.synchronize()
+        elapsed.append((time.perf_counter() - t0) * 1000)
+
+    return sum(elapsed) / len(elapsed)
+
+
+def time_fused_causal(cfg, q_spec, kv_cache, block_table, seq_lens, Pi, PiT, cents, scale, key_fp8, nc):
+    """Fused kernel: single dispatch, causal=True (spec-verify)."""
+    def fused_fn():
+        return triton_turboquant_decode_attention_spec_xpu(
+            query=q_spec,
+            kv_cache=kv_cache,
+            block_table=block_table,
+            seq_lens=seq_lens,
+            Pi=Pi,
+            centroids=cents,
+            scale=scale,
+            mse_bits=cfg.mse_bits,
+            key_packed_size=cfg.key_packed_size,
+            value_quant_bits=cfg.value_quant_bits,
+            key_fp8=key_fp8,
+            norm_correction=nc,
+            PiT=PiT,
+            max_num_kv_splits=MAX_NUM_KV_SPLITS,
+            causal=True,
+            cached_len=CACHED_LEN,
+        )
+
+    for _ in range(WARMUP):
+        fused_fn()
+    torch.xpu.synchronize()
+
     elapsed = []
     for _ in range(N_TIMED):
         t0 = time.perf_counter()
@@ -133,16 +218,40 @@ if __name__ == "__main__":
         ("turboquant_k3v4_nc", False, True),
     ]
 
-    print(f"\nFused-N_spec benchmark  (N_spec={N_SPEC}, B={B}, Hq={HQ}, D={D}, seqlen={SEQLEN})")
+    # ----------------------------------------------------------------
+    # Table 1: Parallel-completion (causal=False) — original behaviour
+    # ----------------------------------------------------------------
+    print(f"\n=== Table 1: Parallel-completion (causal=False) ===")
+    print(f"Shape: N_spec={N_SPEC}, B={B}, Hq={HQ}, D={D}, seqlen={SEQLEN}")
+    print(f"Looped baseline uses same seq_lens={SEQLEN} for all {N_SPEC} calls.")
     print(f"{'preset':22s}  {'looped_ms':>10s}  {'fused_ms':>10s}  {'speedup':>8s}")
     print("-" * 58)
 
+    parallel_results = []
     for preset, key_fp8, nc in configs:
         args = setup(preset)
-        cfg = args[0]
         t_loop  = time_looped(*args, key_fp8=key_fp8, nc=nc)
         t_fused = time_fused(*args,  key_fp8=key_fp8, nc=nc)
         speedup = t_loop / t_fused
+        parallel_results.append((preset, t_loop, t_fused, speedup))
+        print(f"{preset:22s}  {t_loop:10.3f}  {t_fused:10.3f}  {speedup:8.2f}x")
+
+    # ----------------------------------------------------------------
+    # Table 2: Causal spec-verify (causal=True) — new
+    # ----------------------------------------------------------------
+    print(f"\n=== Table 2: Causal spec-verify (causal=True) ===")
+    print(f"Shape: N_spec={N_SPEC}, B={B}, Hq={HQ}, D={D}, seqlen={SEQLEN}, cached_len={CACHED_LEN}")
+    print(f"Looped baseline uses synth seq_lens = cached_len+n+1 per call (vLLM path).")
+    print(f"{'preset':22s}  {'looped_ms':>10s}  {'fused_ms':>10s}  {'speedup':>8s}")
+    print("-" * 58)
+
+    causal_results = []
+    for preset, key_fp8, nc in configs:
+        args = setup(preset)
+        t_loop  = time_looped_causal(*args, key_fp8=key_fp8, nc=nc)
+        t_fused = time_fused_causal(*args,  key_fp8=key_fp8, nc=nc)
+        speedup = t_loop / t_fused
+        causal_results.append((preset, t_loop, t_fused, speedup))
         print(f"{preset:22s}  {t_loop:10.3f}  {t_fused:10.3f}  {speedup:8.2f}x")
 
     print()

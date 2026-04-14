@@ -363,12 +363,19 @@ def _tq_decode_stage1_spec(
     KEY_FP8: tl.constexpr,
     NORM_CORRECTION: tl.constexpr = 0,
     FP8_E4B15: tl.constexpr = 0,
+    CAUSAL: tl.constexpr = 0,
+    cached_len: tl.constexpr = 0,
 ):
     """Fused multi-query decode stage1.
 
     Grid: (B, Hq, NUM_KV_SPLITS).  N_spec queries are handled inside the
     kernel — K dequant is performed once per BLOCK_KV tile and shared across
     all N_spec queries, saving both launch overhead and redundant unpack work.
+
+    When CAUSAL=1, query n sees exactly cached_len+n+1 tokens (causal
+    spec-verify masking).  cached_len is the shared prefix length (scalar
+    constexpr per kernel call).  CAUSAL=0 is the parallel-completion path —
+    behaviour is byte-identical to the original kernel.
     """
     bid = tl.program_id(0)  # batch index
     hid = tl.program_id(1)  # q_head index
@@ -392,6 +399,11 @@ def _tq_decode_stage1_spec(
     d_mask = d_offs < HEAD_DIM
     kv_range = tl.arange(0, BLOCK_KV)
     n_idx = tl.arange(0, N_SPEC)  # [N_SPEC]
+
+    # CAUSAL mode: per-query effective end position [N_SPEC]
+    # query n sees cached_len+n+1 tokens, clamped to seq_len
+    if CAUSAL:
+        eff_end_per_query = tl.minimum(cached_len + n_idx + 1, seq_len)  # [N_SPEC]
 
     # Load all N_spec query vectors for this (b, h): [N_SPEC, BLOCK_D]
     q_base = bid * stride_qb + hid * stride_qh
@@ -472,7 +484,11 @@ def _tq_decode_stage1_spec(
                 )
                 * ATTN_SCALE
             )
-            scores = tl.where(kv_mask[None, :], scores, -float("inf"))
+            if CAUSAL:
+                causal_mask = kv_mask[None, :] & (kv_offs[None, :] < eff_end_per_query[:, None])
+                scores = tl.where(causal_mask, scores, -float("inf"))
+            else:
+                scores = tl.where(kv_mask[None, :], scores, -float("inf"))
         else:
             # MSE unpack + centroids: k [BLOCK_KV, BLOCK_D]
             mse_addrs0 = slot_bases[:, None] + mse_byte_idx[None, :]
@@ -519,7 +535,11 @@ def _tq_decode_stage1_spec(
                 axis=2,
             )
             scores = vec_norms[None, :] * term1 * ATTN_SCALE
-            scores = tl.where(kv_mask[None, :], scores, -float("inf"))
+            if CAUSAL:
+                causal_mask = kv_mask[None, :] & (kv_offs[None, :] < eff_end_per_query[:, None])
+                scores = tl.where(causal_mask, scores, -float("inf"))
+            else:
+                scores = tl.where(kv_mask[None, :], scores, -float("inf"))
 
         # ============================================================
         # PER-QUERY ONLINE SOFTMAX UPDATE: [N_SPEC]

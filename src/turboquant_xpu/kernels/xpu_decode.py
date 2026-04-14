@@ -94,6 +94,8 @@ def triton_turboquant_decode_attention_spec_xpu(
     norm_correction: bool = False,
     PiT: torch.Tensor | None = None,
     max_num_kv_splits: int = 32,
+    causal: bool = False,
+    cached_len: int | None = None,
 ) -> torch.Tensor:
     """Fused multi-query TurboQuant decode attention for speculative decoding.
 
@@ -102,11 +104,21 @@ def triton_turboquant_decode_attention_spec_xpu(
     BLOCK_KV tile, saving both dispatch overhead and redundant unpack work.
 
     Args:
-        query: [N_spec, B, Hq, D] — all speculative query vectors.
+        query:      [N_spec, B, Hq, D] — all speculative query vectors.
+        causal:     When True, apply causal spec-verify masking: query n
+                    attends to exactly cached_len+n+1 tokens.  This matches
+                    vLLM's synth_seq_lens = arange(cached_len+1, seq_len+1).
+                    When False (default), all queries share the same seq_len
+                    (parallel-completion scoring path — original behaviour).
+        cached_len: Required when causal=True.  Integer prefix length shared
+                    by all items in the batch.  query 0 → cached_len+1 tokens,
+                    query N_spec-1 → cached_len+N_spec = seq_len tokens.
 
     Returns:
         [N_spec, B, Hq, D] in query.dtype.
     """
+    if causal and cached_len is None:
+        raise ValueError("causal=True requires cached_len to be provided")
     N_spec, B, Hq, D = query.shape
     Hk = kv_cache.shape[2]
     block_size = kv_cache.shape[1]
@@ -179,6 +191,8 @@ def triton_turboquant_decode_attention_spec_xpu(
         KEY_FP8=1 if key_fp8 else 0,
         NORM_CORRECTION=1 if norm_correction else 0,
         FP8_E4B15=fp8_e4b15,
+        CAUSAL=1 if causal else 0,
+        cached_len=int(cached_len) if causal else 0,
         num_warps=1,
         num_stages=1,
     )
