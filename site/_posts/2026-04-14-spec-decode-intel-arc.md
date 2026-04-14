@@ -9,7 +9,8 @@ tags: [triton, sycl, speculative-decoding, turboquant, bmg-g31, intel-arc-pro-b7
 ## TL;DR
 
 - TurboQuant KV cache quantization on Intel Arc Pro B70 (BMG-G31, Xe2) trades 3-8x KV capacity for 0.27-0.47x throughput vs FP16. Speculative decoding amplifies the gap: FP16+spec hits 2.37x, TQ+spec only 1.34x.
-- I tried to close the gap with a custom SYCL kernel using `joint_matrix` (DPAS) for M=N_spec=8 verification. The proof-of-concept landed at 50-60x **slower** than Triton. Root cause was a combination of per-call PCIe transfers (~400 MB/call) and, once I fixed that with zero-copy USM pointers, structural gaps (no split-KV, no SIMD, no SLM reuse) that left a 20-25x algorithmic deficit. Decision: [NO-GO (`796f7df`)](https://github.com/bryanvine/turboquant-xpu/commit/796f7df).
+- I tried a custom SYCL kernel using `joint_matrix` (DPAS) for M=N_spec=8 verification. First bench: **50-60x slower** than Triton — per-call PCIe transfers (~400 MB/call) dominated.
+- Rebuilt with zero-copy USM pointers. Gap closed from 50-60x to **20-25x**, but the remainder was algorithmic: the scalar baseline had no split-KV, no SIMD cooperation, no SLM reuse. Decision: [NO-GO (`796f7df`)](https://github.com/bryanvine/turboquant-xpu/commit/796f7df); thesis untested.
 - Profiling the Triton baseline ([`b69399a`](https://github.com/bryanvine/turboquant-xpu/commit/b69399a)) revealed 24% of wall time in Level-Zero submission overhead across the N_spec loop, 6.2% FP32 compute utilization, and 3.9% BW utilization — not throughput-bound, dispatch-bound.
 - A single fused Triton kernel ([`425fc5c`](https://github.com/bryanvine/turboquant-xpu/commit/425fc5c), causal mode [`c0a69a3`](https://github.com/bryanvine/turboquant-xpu/commit/c0a69a3)) gives a **2.04x backend-layer speedup on k3v4_nc** and **1.07x on k8v4**. The asymmetry is the point: k8v4's cheap FP8 dequant leaves almost nothing to share across queries; k3v4_nc's MSE-centroid gather is expensive per tile and amortizes 8x over the spec window.
 - Everything is in [`github.com/bryanvine/turboquant-xpu`](https://github.com/bryanvine/turboquant-xpu). Intel's team acknowledged TQ on XPU in [vllm-xpu-kernels issue #271](https://github.com/vllm-project/vllm-xpu-kernels/issues/271); a SYCL port is on their roadmap.
@@ -203,7 +204,7 @@ Running the same profiling script against the fused kernel:
 
 Launch overhead fell from 2.10 ms to 0.20 ms — from 24% of wall time to under 10%. Compute utilization roughly tripled to 14-18% (bandwidth utilization *fell*, because per-tile K data is now read once and reused instead of reloaded per query — arithmetic intensity jumps accordingly).
 
-Attribution: of the ~5.9 ms k8v4 wall-time reduction, about 1.9 ms (62%) is direct launch-overhead elimination. The remaining ~40% — which is why k3v4_nc beats k8v4 in the fused case — comes from K-dequant sharing. The MSE 3-bit unpack plus centroid gather plus norm correction is expensive per tile; the FP8 descale in k8v4 is a cheap bitcast. Sharing the expensive path 8x matters more than sharing the cheap path 8x.
+Attribution: of the ~5.9 ms k8v4 wall-time reduction, about 1.9 ms (62%) is direct launch-overhead elimination; the remaining ~40% comes from K-dequant sharing across the N_spec window. The per-preset asymmetry this sharing produces matters more at the integration layer — covered in Part 6.
 
 ## Part 4: The causal correction
 
@@ -295,13 +296,11 @@ Gated behind `TQ_USE_FUSED_SPEC` so users can A/B per preset. The looped path be
 | turboquant_k8v4 | 3.140 | 2.934 | **1.07x** |
 | turboquant_k3v4_nc | 3.992 | 1.955 | **2.04x** |
 
-These are substantially smaller than the kernel-alone causal micro-bench (2.75x / 2.99x). The explanation matters.
+These are substantially smaller than the kernel-alone causal micro-bench (2.75x / 2.99x). The reason: the production baseline isn't 8 separate kernel calls. `_prefill_attention` makes **one call with B=N_spec=8 and incrementing seq_lens**, delegating the per-spec-token dimension to the batch axis of the existing single-query kernel. That already pays the dispatch cost once and exploits cross-query batch parallelism — so the launch-overhead elimination that drove ~60% of the micro-bench speedup doesn't exist at the integration layer.
 
-The kernel micro-bench's looped baseline made **8 separate kernel calls with B=4 each** — 16 Level-Zero submissions, the pattern the un-fused profile measured. The integration baseline does something different: **one kernel call with B=N_spec=8 and incrementing seq_lens**, delegating the per-spec-token dimension to the batch axis of the existing single-query kernel. That already exploits cross-query batch parallelism and pays the dispatch cost once, not 8 times. The launch-overhead elimination that drove ~60% of the micro-bench speedup does not exist at the integration layer — the production code had already captured it via the batch dimension.
+What remains is K-dequant sharing. For `k3v4_nc` (MSE-centroid rotation + norm correction per tile — expensive) sharing across 8 queries is worth 2.04x. For `k8v4` (a single FP8 bitcast per tile — cheap) there's almost nothing to share, so the fused kernel barely beats the batched looped kernel: 1.07x.
 
-What remains at the integration layer is just K-dequant sharing. For k3v4_nc (MSE-centroid rotation + norm correction per tile), sharing across 8 queries is worth 2.04x. For k8v4 (FP8 descale per tile — one bitcast), there is almost nothing to share, so the fused kernel is only marginally better than the batched looped kernel: 1.07x.
-
-This inverts the preset recommendation. For parallel-completion the fused kernel helped k3v4_nc more than k8v4 (4.22x vs 2.71x) because expensive dequant amplifies sharing. At the integration layer, k8v4's batch-axis trick already captures the easy gain, so the remaining fused win is concentrated on k3v4_nc. Preset choice is now neutral for k8v4 (fused and batched-loop both land near 3 ms); enabling fusion for k3v4_nc is worth 2x — which is also the preset that matters most, giving 3.7-8.5x KV capacity depending on model.
+Enabling fusion is worth 2x for `k3v4_nc` — also the preset that matters most, giving 3.7-8.5x KV capacity depending on model. `k8v4` is effectively neutral.
 
 ### What isn't measured
 
