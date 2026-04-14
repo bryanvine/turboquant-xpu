@@ -36,6 +36,12 @@
    ```
    Expected: at least one `[level_zero:gpu]` line for the B70, shown as `Intel(R) Graphics [0xe223]`.
 
+**AOT vs. JIT compilation note.** The `-fsycl-targets=intel_gpu_bmg_g21` ahead-of-time flag requires `ocloc` (Intel Graphics Compiler offline tool), which is packaged separately from the base `intel-oneapi-compiler-dpcpp-cpp` install. If `ocloc` is absent, `icpx` will error with `ocloc tool could not be found`. In that case, drop the `-fsycl-targets` flag entirely and let the compiler emit a fat binary that JIT-compiles to the device at first run:
+```bash
+icpx -fsycl -O2 src/_smoke_hello.cpp -o smoke_hello   # JIT fallback, no ocloc needed
+```
+JIT compilation is transparent at runtime and produces correct results; startup latency for the first kernel launch is slightly higher. To restore AOT: `sudo apt install intel-oneapi-compiler-dpcpp-cpp-runtime` (which includes `ocloc`) and re-compile with `-fsycl-targets=intel_gpu_bmg_g21`.
+
 ## Python env (after Task 3)
 `python3 -m venv .venv-sycl && source .venv-sycl/bin/activate && pip install -r sycl/requirements.txt`
 
