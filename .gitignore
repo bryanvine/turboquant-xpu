@@ -15,3 +15,9 @@ venv/
 
 # superpowers git worktrees live here; never commit their contents
 .worktrees/
+
+# SYCL PoC build artifacts
+sycl/build/
+*.o
+*.spv
+.venv-sycl/

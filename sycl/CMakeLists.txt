@@ -1,0 +1,54 @@
+cmake_minimum_required(VERSION 3.26)
+project(turboquant_xpu_sycl LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Require icpx (stock oneAPI) or clang++ (intel/llvm nightly)
+if(NOT CMAKE_CXX_COMPILER MATCHES "(icpx|clang\\+\\+)$")
+  message(FATAL_ERROR "Please configure with -DCMAKE_CXX_COMPILER=icpx (stock oneAPI) or clang++ (intel/llvm nightly). See docs/SYCL_POC_BUILD.md.")
+endif()
+
+find_package(pybind11 REQUIRED CONFIG)
+
+# Default AOT target: BMG-G31 silicon (Intel Arc Pro B70, PCI 0xe223). Override
+# with e.g. -DVLLM_XPU_AOT_DEVICES=intel_gpu_bmg_g31 on the cmake command line,
+# or set to an empty string to force JIT compilation. JIT is REQUIRED when
+# building with the intel/llvm nightly (AOT target names differ between 2025.3
+# and the nightly; use JIT to sidestep the version skew).
+if(NOT DEFINED VLLM_XPU_AOT_DEVICES)
+  set(VLLM_XPU_AOT_DEVICES "intel_gpu_bmg_g31" CACHE STRING "AOT target list for SYCL build")
+endif()
+
+set(SYCL_FLAGS
+  -fsycl
+  -O3
+  -fno-sycl-instrument-device-code
+)
+if(NOT "${VLLM_XPU_AOT_DEVICES}" STREQUAL "")
+  list(APPEND SYCL_FLAGS -fsycl-targets=${VLLM_XPU_AOT_DEVICES})
+endif()
+
+# SPV extensions used by the DPAS + 2D block I/O path. These are SPIR-V
+# translator args applied during link, not during C++ compile — pass only via
+# target_link_options, otherwise icpx emits "argument unused during compilation".
+set(SPV_EXTS
+  -Xspirv-translator
+  -spirv-ext=+SPV_INTEL_subgroup_matrix_multiply_accumulate,+SPV_INTEL_2d_block_io,+SPV_INTEL_split_barrier
+)
+
+pybind11_add_module(turboquant_xpu_sycl
+  src/tq_decode_spec_scalar.cpp
+  src/tq_decode_spec_dpas.cpp
+  src/tq_decode_spec_py.cpp
+)
+
+target_include_directories(turboquant_xpu_sycl PRIVATE include src)
+target_compile_options(turboquant_xpu_sycl PRIVATE ${SYCL_FLAGS})
+target_link_options(turboquant_xpu_sycl PRIVATE
+  ${SYCL_FLAGS}
+  ${SPV_EXTS}
+  -fsycl-max-parallel-link-jobs=8
+  -flink-huge-device-code
+)
