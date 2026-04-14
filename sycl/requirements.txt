@@ -1,0 +1,7 @@
+# Torch XPU build — comes from Intel's PyPI index, installed with --index-url below
+torch==2.8.0+xpu
+# Intel Triton (ships in Intel's torch-xpu wheel bundle for 2.8+)
+# pytest + numpy for the test harness
+pytest>=7.0
+numpy>=1.24
+pybind11>=2.11
