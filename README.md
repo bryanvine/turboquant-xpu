@@ -17,20 +17,25 @@ TurboQuant compresses the KV cache to 3-4 bits per element using Walsh-Hadamard 
 
 ### Results snapshot
 
-| Model | KV capacity vs FP16 | Peak throughput vs FP16 | Notes |
+| Model | Preset | KV capacity vs FP16 | Peak throughput vs FP16 |
 |---|---|---|---|
-| **Qwen3-30B-A3B** (MoE, head_dim=128) | **~8.5×** | 0.47× | MoE sparsity + GQA + small head_dim = best TQ fit |
-| **Gemma4-31B** (dense, head_dim=256/512) | 4.83× | 0.27× | Heterogeneous head_dims hurt compression and speed |
+| **Qwen3-30B-A3B** (MoE, head_dim=128) | k3v4_nc | ~8.5× | 0.47× |
+| **Gemma4-31B** | k3v4_nc | 4.83× | 0.27× (default tuning) |
+| **Gemma4-31B** — recommended | **k8v4** | **2.19×** | **0.62×** |
+
+**Key finding:** on Intel XPU, the `turboquant_k8v4` preset (FP8 keys + 4-bit values) is **3× faster than `k3v4_nc`** on Gemma4 because it skips the Lloyd-Max centroid gather and the WHT rotation GEMM. Use k8v4 unless you specifically need >3.5× KV compression. See [QUICK_WINS_RESULTS.md](docs/QUICK_WINS_RESULTS.md).
 
 See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BENCHMARK_QWEN3_30B.md](docs/BENCHMARK_QWEN3_30B.md) (Qwen3-30B).
 
 ### R&D documents
 
+- [`docs/FINDINGS_SUMMARY.md`](docs/FINDINGS_SUMMARY.md) — **Start here.** One-page summary of everything this project learned
 - [`docs/PROJECT_NARRATIVE.md`](docs/PROJECT_NARRATIVE.md) — the research narrative: what I built, what worked, what didn't, what I learned
 - [`docs/XPU_PORTING_ANALYSIS.md`](docs/XPU_PORTING_ANALYSIS.md) — pre-port analysis of every CUDA-specific code path, risk-rated with XPU workarounds
 - [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md) — full benchmark data on Gemma4-31B (dense, worst-case for TQ)
 - [`docs/BENCHMARK_QWEN3_30B.md`](docs/BENCHMARK_QWEN3_30B.md) — Qwen3-30B-A3B MoE benchmark (8.5× KV capacity)
 - [`docs/CROSS_MODEL_COMPARISON.md`](docs/CROSS_MODEL_COMPARISON.md) — why model architecture drives TurboQuant performance (Gemma4 vs Qwen3-30B)
+- [`docs/QUICK_WINS_RESULTS.md`](docs/QUICK_WINS_RESULTS.md) — **3× speedup from k8v4 preset** — preset and kernel-tuning sweep
 - [`docs/SYCL_KERNEL_DESIGN.md`](docs/SYCL_KERNEL_DESIGN.md) — 2000-word design brief for native SYCL kernels on Xe2/BMG-G31
 - [`docs/QWEN35_EXPLORATION.md`](docs/QWEN35_EXPLORATION.md) — analysis of whether TurboQuant unblocks Qwen3.5 (answer: orthogonal, but the SYCL research transfers)
 - [`docs/vllm_xpu_kernels_issue_271.md`](docs/vllm_xpu_kernels_issue_271.md) — mirror of my feasibility report filed with Intel
