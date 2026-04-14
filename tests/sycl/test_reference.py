@@ -116,3 +116,9 @@ def test_k3v4_nc_matches_naive_within_3bit_bound():
     # missing norm-correction would push into the 60–100 % range.
     assert rel < 0.45, f"k3v4_nc relative error {rel:.3f} above 3-bit bound"
     assert rel > 1e-2, f"k3v4_nc relative error {rel:.2e} suspiciously low — did the path actually run?"
+
+
+def test_fixture_smoke(make_case):
+    case = make_case(shape="small", preset="k8v4")
+    out = ref_decode_single_query(case["q"][0], case["cache"], preset="k8v4")
+    assert out.shape == (2, 8, 128)
