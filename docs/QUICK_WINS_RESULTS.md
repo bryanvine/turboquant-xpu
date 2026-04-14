@@ -33,7 +33,7 @@ Config variants tested:
 | V0: k3v4_nc baseline | 7.7 | 20.9 | 27.0 | 1.00× |
 | **V1: k8v4 (FP8 keys)** | **6.8** | **41.5** | **82.9** | **3.07×** |
 | V2: k3v4_nc + BLOCK_KV=16 + num_warps=4 | 4.0 | 35.3 | 57.8 | 2.14× |
-| V3: k8v4 + BLOCK_KV=16 + num_warps=4 | (testing) | (testing) | (testing) | (testing) |
+| V3: k8v4 + BLOCK_KV=16 + num_warps=4 | 6.9 | 42.0 | 83.0 | 3.07× |
 
 ## What this tells us
 
@@ -83,9 +83,16 @@ If you're memory-bound: k3v4_nc wins.
 If you're throughput-bound: k8v4 wins.
 For most single-user or moderate-concurrency workloads with <20K context: k8v4 is clearly better.
 
-### Finding 4: Gemma4 still benefits from tuning, even at k8v4
+### Finding 4: BLOCK_KV + num_warps tuning helps MSE but NOT FP8
 
-We're waiting on V3 (k8v4 + BLOCK_KV=16 + num_warps=4) data. If V3 beats V1, that's additional evidence that Xe2 SIMD width is under-subscribed at upstream defaults and Intel's Triton autotuner needs a new cost model for Xe2 hardware.
+V3 (k8v4 + tuning) hit 83.0 tok/s vs V1 (k8v4 defaults) at 82.9 tok/s. The difference is within measurement noise — **tuning gives zero benefit on the FP8 path**.
+
+This is a significant observation. On the MSE path (k3v4_nc), tuning gave 2.14×. On the FP8 path (k8v4), it gives nothing. The only difference between these kernels is the key dequantization logic. That tells us:
+
+- The MSE path is **compute-bound** — dominated by the centroid gather loop and the bit-unpack + WHT GEMM dispatch. Larger tiles and more warps give the compiler more room to schedule around these stalls.
+- The FP8 path is **memory-bound** (or launch-bound) — the kernel is already tight enough that adding more warps doesn't help. The bottleneck is elsewhere (probably cache misses on slot_base scatter-gather, or per-call overhead between the Python dispatch and the first Triton kernel instruction).
+
+**Implication for future work:** spending engineering effort on Xe2 tile tuning for `k3v4_nc` is worthwhile; for `k8v4` it's not. The FP8 path needs a different optimization — either native SYCL with SLM staging for the key tile, or elimination of the external Q·PiT GEMM launch overhead (which doesn't matter for k8v4 since the rotation isn't needed, but still there are launch overheads in the overall attention op dispatch).
 
 ## Revised performance picture
 
