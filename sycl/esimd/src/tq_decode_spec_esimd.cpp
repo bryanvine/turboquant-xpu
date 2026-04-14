@@ -6,6 +6,25 @@
 #include <cstdint>
 #include <stdexcept>
 
+// Ablation flags for profiling. All default off; correctness tests assume all
+// off. Setting any of these produces an INCORRECT kernel but answers "how
+// much time does this section cost?"
+#ifndef TQ_ABLATE_V_DEQUANT
+#define TQ_ABLATE_V_DEQUANT 0
+#endif
+#ifndef TQ_ABLATE_K_DEQUANT
+#define TQ_ABLATE_K_DEQUANT 0
+#endif
+#ifndef TQ_ABLATE_DPAS_QK
+#define TQ_ABLATE_DPAS_QK 0
+#endif
+#ifndef TQ_ABLATE_DPAS_PV
+#define TQ_ABLATE_DPAS_PV 0
+#endif
+#ifndef TQ_ABLATE_SOFTMAX
+#define TQ_ABLATE_SOFTMAX 0
+#endif
+
 namespace esimd = sycl::ext::intel::esimd;
 namespace xmx = sycl::ext::intel::esimd::xmx;
 
@@ -103,6 +122,7 @@ void tq_decode_spec_esimd(
         for (int kv0 = 0; kv0 < seqlen_v; kv0 += BLK_KV) {
           // --- Dequant K tile [BLK_KV][D] into k_tile register ---
           esimd::simd<sycl::half, BLK_KV * D_DIM> k_tile(sycl::half(0.f));
+#if !TQ_ABLATE_K_DEQUANT
           for (int t = 0; t < BLK_KV; ++t) {
             int kv = kv0 + t;
             if (pid == PRESET_K8V4) {
@@ -124,10 +144,11 @@ void tq_decode_spec_esimd(
               k_tile.template select<D_DIM, 1>(t * D_DIM) = k_h;
             }
           }
+#endif
 
           // --- Dequant V tile [BLK_KV][D] (fp16) into v_tile register ---
-          // V is uint8; dequant is v_f = float(v_u8) * v_scale + v_zero. Vectorize.
           esimd::simd<sycl::half, BLK_KV * D_DIM> v_tile(sycl::half(0.f));
+#if !TQ_ABLATE_V_DEQUANT
           for (int t = 0; t < BLK_KV; ++t) {
             int kv = kv0 + t;
             const uint8_t* vp = d_vidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
@@ -139,17 +160,17 @@ void tq_decode_spec_esimd(
             esimd::simd<sycl::half, D_DIM> v_h = v_f;
             v_tile.template select<D_DIM, 1>(t * D_DIM) = v_h;
           }
+#endif
 
           // --- DPAS Q·Kᵀ → c_scores [M_TILE × N_TILE] ---
           esimd::simd<float, M_TILE * N_TILE> c_scores(0.f);
+#if !TQ_ABLATE_DPAS_QK
           for (int ds = 0; ds < D_DIM; ds += K_TILE) {
-            // A: rebuild fp16 [M_TILE][K_TILE] slice from the hoisted q_all.
             esimd::simd<sycl::half, M_TILE * K_TILE> a_reg(sycl::half(0.f));
             for (int n = 0; n < n_spec; ++n) {
               a_reg.template select<K_TILE, 1>(n * K_TILE) =
                   q_all.template select<K_TILE, 1>(n * D_DIM + ds);
             }
-            // B_vnni [K/2][N_TILE][2] from k_tile: k_tile[t=nc][d = ds+2kp+i]
             esimd::simd<sycl::half, K_TILE * N_TILE> b_reg;
             for (int kp = 0; kp < K_TILE / 2; ++kp) {
               for (int nc = 0; nc < N_TILE; ++nc) {
@@ -161,6 +182,7 @@ void tq_decode_spec_esimd(
                 c_scores, b_reg, a_reg);
           }
           c_scores = c_scores * attn_scale;
+#endif
 
           // --- Softmax: mask, per-row max, re, p fp16, l-update, acc rescale ---
           float m_new_arr[M_TILE];
@@ -169,6 +191,18 @@ void tq_decode_spec_esimd(
           // Matrix p[M_TILE * N_TILE] fp16 for DPAS.
           esimd::simd<sycl::half, M_TILE * N_TILE> p_reg(sycl::half(0.f));
 
+#if TQ_ABLATE_SOFTMAX
+          // Fake softmax: p_reg = 1/BLK_KV (uniform), keep l_prev trivial.
+          for (int n = 0; n < M_TILE; ++n) {
+            m_new_arr[n] = 0.f;
+            re_arr[n] = 1.f;
+            row_has_any[n] = (n < n_spec);
+            if (n < n_spec) {
+              l_prev[n] += float(BLK_KV);
+              for (int t = 0; t < BLK_KV; ++t) p_reg[n * N_TILE + t] = sycl::half(1.0f / BLK_KV);
+            }
+          }
+#else
           for (int n = 0; n < M_TILE; ++n) {
             row_has_any[n] = false;
             if (n >= n_spec) { m_new_arr[n] = -INFINITY; re_arr[n] = 0.f; continue; }
@@ -206,6 +240,7 @@ void tq_decode_spec_esimd(
             l_prev[n] += lsum;
             m_prev[n] = m_new;
           }
+#endif
 
           // --- Rescale acc by re[n] (row-wise) ---
           for (int n = 0; n < n_spec; ++n) {
@@ -219,10 +254,9 @@ void tq_decode_spec_esimd(
           }
 
           // --- DPAS P·V: for each d_slice, c_acc += p · V[:, ds:ds+N_TILE] ---
+#if !TQ_ABLATE_DPAS_PV
           for (int ds_idx = 0; ds_idx < N_D_SLICES; ++ds_idx) {
             int ds = ds_idx * N_TILE;
-            // B_vnni from v_tile: B[k, nc, i] = v_tile[t = 2*kp+i][d = ds + nc]
-            //   B_vnni[kp * N*2 + nc*2 + i] = v_tile[(2*kp+i) * D + ds + nc]
             esimd::simd<sycl::half, K_TILE * N_TILE> b_pv;
             for (int kp = 0; kp < K_TILE / 2; ++kp) {
               for (int nc = 0; nc < N_TILE; ++nc) {
@@ -233,6 +267,7 @@ void tq_decode_spec_esimd(
             acc_d[ds_idx] = xmx::dpas<8, 8, float, float, sycl::half, sycl::half>(
                 acc_d[ds_idx], b_pv, p_reg);
           }
+#endif
         }
 
         // --- Emit output: acc_d[ds_idx] holds [M_TILE × N_TILE] for d in [ds..ds+N_TILE) ---
