@@ -12,6 +12,8 @@ namespace xmx = sycl::ext::intel::esimd::xmx;
 namespace turboquant_xpu_esimd {
 using namespace layout;
 
+static constexpr int N_D_SLICES = D_DIM / N_TILE;  // 128 / 16 = 8
+
 static sycl::queue& queue() {
   static sycl::queue q{sycl::gpu_selector_v};
   return q;
@@ -53,14 +55,12 @@ void tq_decode_spec_esimd(
   const auto* d_cent   = reinterpret_cast<const float*>(centroids);
   auto* d_out          = reinterpret_cast<float*>(out);
 
-  // Grid: one WG per (b, h_q), one sub-group of SG_SIZE threads. Only thread 0
-  // in each WG does real work in this hybrid DPAS+scalar version. Thread 0's
-  // 16 SIMD lanes are used for the DPAS op itself (via simd<...> registers).
+  // Grid: one WG per (b, h_q). Thread 0 of each WG does the real work.
   const sycl::range<2> global_range{std::size_t(B) * Hq, SG_SIZE};
   const sycl::range<2> local_range{1, SG_SIZE};
 
   q.submit([&](sycl::handler& h) {
-    h.parallel_for<class tq_decode_spec_esimd_dpas_qk>(
+    h.parallel_for<class tq_decode_spec_esimd_dpas_full>(
       sycl::nd_range<2>(global_range, local_range),
       [=](sycl::nd_item<2> it) SYCL_ESIMD_KERNEL {
         const int wg_id = it.get_global_id(0);
@@ -71,17 +71,18 @@ void tq_decode_spec_esimd(
 
         if (lane != 0) return;
 
-        // Online softmax state, per-query — plain registers.
+        // Online softmax state (per-query).
         float m_prev[M_TILE];
         float l_prev[M_TILE];
-        float acc[M_TILE][D_DIM];
         for (int n = 0; n < M_TILE; ++n) {
           m_prev[n] = -INFINITY;
           l_prev[n] = 0.0f;
-          for (int d = 0; d < D_DIM; ++d) acc[n][d] = 0.f;
         }
+        // 8 d-slice accumulators. Each: [M_TILE × N_TILE] fp32.
+        esimd::simd<float, M_TILE * N_TILE> acc_d[N_D_SLICES];
+        for (int i = 0; i < N_D_SLICES; ++i) acc_d[i] = 0.f;
 
-        // Per-query effective seq_len.
+        // Per-query eff_end_q.
         int eff_end_q[M_TILE];
         for (int n = 0; n < M_TILE; ++n) {
           int eff = c_len + n + 1;
@@ -90,13 +91,11 @@ void tq_decode_spec_esimd(
         }
 
         for (int kv0 = 0; kv0 < seqlen_v; kv0 += BLK_KV) {
-          // ---- Dequant K tile [BLK_KV][D] into a register simd<half, 2048> ----
-          // Row-major: k_tile[t*D_DIM + d] = fp16 K[kv0+t, d].
+          // --- Dequant K tile [BLK_KV][D] into k_tile register ---
           esimd::simd<sycl::half, BLK_KV * D_DIM> k_tile(sycl::half(0.f));
           for (int t = 0; t < BLK_KV; ++t) {
             int kv = kv0 + t;
             if (pid == PRESET_K8V4) {
-              // fp32 → fp16 copy of one D-row.
               esimd::simd<float, D_DIM> k_f;
               k_f.copy_from(d_kfp8 + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM));
               esimd::simd<sycl::half, D_DIM> k_h = k_f;
@@ -105,7 +104,6 @@ void tq_decode_spec_esimd(
               const uint8_t* kp_idx = d_kidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
               float norm = d_knorm[(b * seqlen_v + kv) * hk_total + h_k];
               esimd::simd<float, D_DIM> k_f;
-              // Scalar gather from centroids (small D=128, per-lane table lookup).
               for (int d = 0; d < D_DIM; ++d) {
                 k_f[d] = d_cent[kp_idx[d] & (K3_CENTROIDS - 1)] * norm;
               }
@@ -114,21 +112,32 @@ void tq_decode_spec_esimd(
             }
           }
 
-          // ---- DPAS Q·Kᵀ, tiled over D in slices of K_TILE=16 ----
-          // scores tile: [M_TILE=8][N_TILE=16] fp32
+          // --- Dequant V tile [BLK_KV][D] (fp16) into v_tile register ---
+          esimd::simd<sycl::half, BLK_KV * D_DIM> v_tile(sycl::half(0.f));
+          for (int t = 0; t < BLK_KV; ++t) {
+            int kv = kv0 + t;
+            const uint8_t* vp = d_vidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
+            float vs = d_vscale[(b * seqlen_v + kv) * hk_total + h_k];
+            float vz = d_vzero[(b * seqlen_v + kv) * hk_total + h_k];
+            esimd::simd<float, D_DIM> v_f;
+            for (int d = 0; d < D_DIM; ++d) {
+              v_f[d] = float(vp[d]) * vs + vz;
+            }
+            esimd::simd<sycl::half, D_DIM> v_h = v_f;
+            v_tile.template select<D_DIM, 1>(t * D_DIM) = v_h;
+          }
+
+          // --- DPAS Q·Kᵀ → c_scores [M_TILE × N_TILE] ---
           esimd::simd<float, M_TILE * N_TILE> c_scores(0.f);
           for (int ds = 0; ds < D_DIM; ds += K_TILE) {
-            // A: Q slice [M_TILE][K_TILE] row-major, fp16. Zero-pad n >= n_spec.
             esimd::simd<sycl::half, M_TILE * K_TILE> a_reg(sycl::half(0.f));
             for (int n = 0; n < n_spec; ++n) {
               const float* q_ptr = d_q + (((n * b_total + b) * hq_total + hq) * D_DIM) + ds;
               esimd::simd<float, K_TILE> q_slice;
               q_slice.copy_from(q_ptr);
-              esimd::simd<sycl::half, K_TILE> q_h = q_slice;
-              a_reg.template select<K_TILE, 1>(n * K_TILE) = q_h;
+              a_reg.template select<K_TILE, 1>(n * K_TILE) = esimd::simd<sycl::half, K_TILE>(q_slice);
             }
-            // B (VNNI-packed): K slice [K_TILE][N_TILE] col-major from k_tile, then
-            //   B_vnni[kp*N*2 + nc*2 + i] = k_tile[nc*D + ds + 2*kp + i]
+            // B_vnni [K/2][N_TILE][2] from k_tile: k_tile[t=nc][d = ds+2kp+i]
             esimd::simd<sycl::half, K_TILE * N_TILE> b_reg;
             for (int kp = 0; kp < K_TILE / 2; ++kp) {
               for (int nc = 0; nc < N_TILE; ++nc) {
@@ -139,55 +148,91 @@ void tq_decode_spec_esimd(
             c_scores = xmx::dpas<8, 8, float, float, sycl::half, sycl::half>(
                 c_scores, b_reg, a_reg);
           }
-
-          // Apply attn_scale.
           c_scores = c_scores * attn_scale;
 
-          // ---- Scalar online softmax + P·V (unchanged from Task 5) ----
-          for (int n = 0; n < n_spec; ++n) {
-            float m_local = c_scores[n * N_TILE];
-            for (int t = 1; t < BLK_KV; ++t) {
-              float v = c_scores[n * N_TILE + t];
-              if (v > m_local) m_local = v;
-            }
-            // Causal mask on the local max: drop positions past eff_end.
-            // (Already encoded below when we iterate; we just skip those t's.)
-            // Re-compute m_local skipping masked-out positions for correctness.
-            if (is_causal) {
-              m_local = -INFINITY;
-              for (int t = 0; t < BLK_KV; ++t) {
-                int kv = kv0 + t;
-                if (kv >= eff_end_q[n]) continue;
-                float v = c_scores[n * N_TILE + t];
-                if (v > m_local) m_local = v;
-              }
-              // If all masked, m_local stays -INF — skip the block for this n.
-              if (m_local == -INFINITY) continue;
-            }
-            float m_p = m_prev[n];
-            float m_new = m_local > m_p ? m_local : m_p;
-            float re = esimd::exp(esimd::simd<float, 1>(m_p - m_new))[0];
-            for (int d = 0; d < D_DIM; ++d) acc[n][d] *= re;
-            l_prev[n] *= re;
+          // --- Softmax: mask, per-row max, re, p fp16, l-update, acc rescale ---
+          float m_new_arr[M_TILE];
+          float re_arr[M_TILE];
+          bool row_has_any[M_TILE];
+          // Matrix p[M_TILE * N_TILE] fp16 for DPAS.
+          esimd::simd<sycl::half, M_TILE * N_TILE> p_reg(sycl::half(0.f));
+
+          for (int n = 0; n < M_TILE; ++n) {
+            row_has_any[n] = false;
+            if (n >= n_spec) { m_new_arr[n] = -INFINITY; re_arr[n] = 0.f; continue; }
+            float m_local = -INFINITY;
             for (int t = 0; t < BLK_KV; ++t) {
               int kv = kv0 + t;
               if (kv >= eff_end_q[n]) continue;
-              float p = esimd::exp(esimd::simd<float, 1>(c_scores[n * N_TILE + t] - m_new))[0];
-              l_prev[n] += p;
-              const uint8_t* vp = d_vidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
-              float vs = d_vscale[(b * seqlen_v + kv) * hk_total + h_k];
-              float vz = d_vzero[(b * seqlen_v + kv) * hk_total + h_k];
-              for (int d = 0; d < D_DIM; ++d)
-                acc[n][d] += p * (float(vp[d]) * vs + vz);
+              row_has_any[n] = true;
+              float v = c_scores[n * N_TILE + t];
+              if (v > m_local) m_local = v;
             }
+            if (!row_has_any[n]) {
+              // Nothing to merge this block for this query.
+              m_new_arr[n] = m_prev[n];
+              re_arr[n] = 1.f;
+              continue;
+            }
+            float m_p = m_prev[n];
+            float m_new = m_local > m_p ? m_local : m_p;
+            // re = exp(m_p - m_new). If m_p is -INF, re = 0.
+            float re;
+            if (m_p == -INFINITY) re = 0.f;
+            else re = esimd::exp(esimd::simd<float, 1>(m_p - m_new))[0];
+            m_new_arr[n] = m_new;
+            re_arr[n] = re;
+            l_prev[n] *= re;
+            float lsum = 0.f;
+            for (int t = 0; t < BLK_KV; ++t) {
+              int kv = kv0 + t;
+              if (kv >= eff_end_q[n]) continue;
+              float pf = esimd::exp(esimd::simd<float, 1>(c_scores[n * N_TILE + t] - m_new))[0];
+              lsum += pf;
+              p_reg[n * N_TILE + t] = sycl::half(pf);
+            }
+            l_prev[n] += lsum;
             m_prev[n] = m_new;
+          }
+
+          // --- Rescale acc by re[n] (row-wise) ---
+          for (int n = 0; n < n_spec; ++n) {
+            if (!row_has_any[n]) continue;
+            float re = re_arr[n];
+            if (re == 1.f) continue;
+            for (int ds_idx = 0; ds_idx < N_D_SLICES; ++ds_idx) {
+              auto row_view = acc_d[ds_idx].template select<N_TILE, 1>(n * N_TILE);
+              row_view = row_view * re;
+            }
+          }
+
+          // --- DPAS P·V: for each d_slice, c_acc += p · V[:, ds:ds+N_TILE] ---
+          for (int ds_idx = 0; ds_idx < N_D_SLICES; ++ds_idx) {
+            int ds = ds_idx * N_TILE;
+            // B_vnni from v_tile: B[k, nc, i] = v_tile[t = 2*kp+i][d = ds + nc]
+            //   B_vnni[kp * N*2 + nc*2 + i] = v_tile[(2*kp+i) * D + ds + nc]
+            esimd::simd<sycl::half, K_TILE * N_TILE> b_pv;
+            for (int kp = 0; kp < K_TILE / 2; ++kp) {
+              for (int nc = 0; nc < N_TILE; ++nc) {
+                b_pv[kp * N_TILE * 2 + nc * 2 + 0] = v_tile[(2 * kp + 0) * D_DIM + ds + nc];
+                b_pv[kp * N_TILE * 2 + nc * 2 + 1] = v_tile[(2 * kp + 1) * D_DIM + ds + nc];
+              }
+            }
+            acc_d[ds_idx] = xmx::dpas<8, 8, float, float, sycl::half, sycl::half>(
+                acc_d[ds_idx], b_pv, p_reg);
           }
         }
 
+        // --- Emit output: acc_d[ds_idx] holds [M_TILE × N_TILE] for d in [ds..ds+N_TILE) ---
         for (int n = 0; n < n_spec; ++n) {
           float inv_l = 1.f / l_prev[n];
           float* o_ptr = d_out + (((n * b_total + b) * hq_total + hq) * D_DIM);
-          for (int d = 0; d < D_DIM; ++d) o_ptr[d] = acc[n][d] * inv_l;
+          for (int ds_idx = 0; ds_idx < N_D_SLICES; ++ds_idx) {
+            int ds = ds_idx * N_TILE;
+            for (int nc = 0; nc < N_TILE; ++nc) {
+              o_ptr[ds + nc] = acc_d[ds_idx][n * N_TILE + nc] * inv_l;
+            }
+          }
         }
       });
   }).wait();
