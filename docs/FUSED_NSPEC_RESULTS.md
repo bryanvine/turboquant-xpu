@@ -109,4 +109,4 @@ The speedup remains well above the 1.3× anomaly threshold. The 4.22×
 `k3v4_nc` number in the previous section was real for the parallel-completion
 workload; its causal equivalent is 2.90×.
 
-Commit: pending (see `git log --oneline -1` after commit). Test: `tests/test_fused_nspec.py::test_fused_causal_matches_looped`.
+Commit: `c0a69a3`. Test: `tests/test_fused_nspec.py::test_fused_causal_matches_looped`.
