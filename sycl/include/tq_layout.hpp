@@ -10,6 +10,7 @@ namespace turboquant_xpu_sycl::layout {
 
 constexpr int SG_SIZE = 16;          // Required sub-group size on Xe2
 constexpr int BLOCK_KV_DEFAULT = 64; // See SYCL_KERNEL_DESIGN.md — swept in Task 13
+constexpr int K3_CENTROIDS = 8;      // 3-bit Lloyd-Max key table: 7 active + 1 pad
 
 enum Preset : int {
   PRESET_K8V4   = 0,

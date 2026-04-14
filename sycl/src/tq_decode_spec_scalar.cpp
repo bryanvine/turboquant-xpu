@@ -69,7 +69,7 @@ void tq_decode_spec_scalar(
   auto* d_vidx   = (uint8_t*) make_dev(v_idx_h,     V_IDX_BYTES);
   auto* d_vscale = (float*)   make_dev(v_scale_h,   V_SC_BYTES);
   auto* d_vzero  = (float*)   make_dev(v_zero_h,    V_SC_BYTES);
-  auto* d_cent   = (float*)   make_dev(centroids_h, 8*sizeof(float));
+  auto* d_cent   = (float*)   make_dev(centroids_h, K3_CENTROIDS*sizeof(float));
   auto* d_out    = sycl::malloc_device<float>(OUT_BYTES/sizeof(float), q);
 
   // Grid: one work-item per (n_spec, b, h_q). Intentionally dumb — optimization
@@ -102,7 +102,7 @@ void tq_decode_spec_scalar(
             const uint8_t* kidx = d_kidx + (((b*seqlen + kv)*Hk + h_k)*D);
             float norm = d_knorm[(b*seqlen + kv)*Hk + h_k];
             float term = 0.0f;
-            for (int d = 0; d < D; ++d) term += q_ptr[d] * d_cent[kidx[d] & 7];
+            for (int d = 0; d < D; ++d) term += q_ptr[d] * d_cent[kidx[d] & (K3_CENTROIDS - 1)];
             s = term * norm;
           }
           scores[t] = s * attn_scale;
