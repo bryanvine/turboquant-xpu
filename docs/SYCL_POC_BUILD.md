@@ -42,6 +42,41 @@ icpx -fsycl -O2 src/_smoke_hello.cpp -o smoke_hello   # JIT fallback, no ocloc n
 ```
 JIT compilation is transparent at runtime and produces correct results; startup latency for the first kernel launch is slightly higher. To restore AOT: `sudo apt install intel-ocloc` (ships in the Ubuntu `universe` archive, source package `intel-compute-runtime`) and re-compile with `-fsycl-targets=intel_gpu_bmg_g21`.
 
+## Using the intel/llvm nightly (BMG-G31 joint_matrix)
+
+oneAPI 2025.3's `libsycl.so` is missing the BMG-G31 arch enum in
+`get_matrix_combinations()`, so `joint_matrix` calls throw
+`no matrix hardware on the target device` at runtime on the Arc Pro B70.
+Use Intel's `intel/llvm` nightly until the fix lands in a released oneAPI.
+
+Download and extract (once):
+```bash
+mkdir -p /tmp/intel-llvm-nightly && cd /tmp/intel-llvm-nightly
+curl -LO https://github.com/intel/llvm/releases/download/nightly-2026-04-13/sycl_linux.tar.gz
+tar -xzf sycl_linux.tar.gz --strip-components=0
+```
+
+Build + run with the nightly:
+```bash
+sg render -c '
+  export PATH=/tmp/intel-llvm-nightly/bin:$PATH
+  # oneAPI 2025.3 lib dir is kept on LD_LIBRARY_PATH only for libhwloc.so.15
+  export LD_LIBRARY_PATH=/tmp/intel-llvm-nightly/lib:/opt/intel/oneapi/compiler/2025.3/lib:$LD_LIBRARY_PATH
+  cd sycl
+  rm -rf build
+  cmake -G Ninja -B build -DCMAKE_CXX_COMPILER=clang++ \
+        -Dpybind11_DIR=$(../.venv-sycl/bin/python -m pybind11 --cmakedir) \
+        -DVLLM_XPU_AOT_DEVICES=""
+  cmake --build build
+  cd ..
+  .venv-sycl/bin/python -m pytest tests/sycl/ -v
+'
+```
+
+Do NOT source `/opt/intel/oneapi/setvars.sh` when using the nightly — it clobbers
+PATH back to the stock 2025.3 toolchain. The two-entry `LD_LIBRARY_PATH` above
+is sufficient to pick up libhwloc while keeping the nightly's libsycl first.
+
 ## Python env (after Task 3)
 `python3 -m venv .venv-sycl && source .venv-sycl/bin/activate && pip install -r sycl/requirements.txt`
 

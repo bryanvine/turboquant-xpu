@@ -5,16 +5,18 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Require icpx
-if(NOT CMAKE_CXX_COMPILER MATCHES "icpx")
-  message(FATAL_ERROR "Please configure with -DCMAKE_CXX_COMPILER=icpx after sourcing /opt/intel/oneapi/setvars.sh")
+# Require icpx (stock oneAPI) or clang++ (intel/llvm nightly)
+if(NOT CMAKE_CXX_COMPILER MATCHES "(icpx|clang\\+\\+)$")
+  message(FATAL_ERROR "Please configure with -DCMAKE_CXX_COMPILER=icpx (stock oneAPI) or clang++ (intel/llvm nightly). See docs/SYCL_POC_BUILD.md.")
 endif()
 
 find_package(pybind11 REQUIRED CONFIG)
 
 # Default AOT target: BMG-G31 silicon (Intel Arc Pro B70, PCI 0xe223). Override
 # with e.g. -DVLLM_XPU_AOT_DEVICES=intel_gpu_bmg_g31 on the cmake command line,
-# or set to an empty string to force JIT compilation (no `ocloc` needed).
+# or set to an empty string to force JIT compilation. JIT is REQUIRED when
+# building with the intel/llvm nightly (AOT target names differ between 2025.3
+# and the nightly; use JIT to sidestep the version skew).
 if(NOT DEFINED VLLM_XPU_AOT_DEVICES)
   set(VLLM_XPU_AOT_DEVICES "intel_gpu_bmg_g31" CACHE STRING "AOT target list for SYCL build")
 endif()
