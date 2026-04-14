@@ -12,3 +12,6 @@ build/
 venv/
 *.egg
 .triton/
+
+# superpowers git worktrees live here; never commit their contents
+.worktrees/
