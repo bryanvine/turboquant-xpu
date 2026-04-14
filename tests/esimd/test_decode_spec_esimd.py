@@ -6,13 +6,14 @@ Causal mode is covered in test_decode_spec_esimd_causal.py.
 import numpy as np, pytest, torch
 
 
+@pytest.mark.parametrize("shape", ["small", "poc"])
 @pytest.mark.parametrize("preset,preset_id", [("k8v4", 0), ("k3v4_nc", 1)])
-def test_esimd_matches_reference_parallel_small(make_case, to_xpu, preset, preset_id):
+def test_esimd_matches_reference_parallel(make_case, to_xpu, shape, preset, preset_id):
     import turboquant_xpu_esimd as tq_esimd
     from sycl.reference.tq_decode_reference import (
         ref_decode_spec_batch, pack_cache_for_kernel,
     )
-    case = make_case("small", preset, 101)
+    case = make_case(shape, preset, 101)
     q = case["q"]
     cache = case["cache"]
     sh = case["sh"]

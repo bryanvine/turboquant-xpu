@@ -14,7 +14,6 @@ import numpy as np, pytest, torch
 
 from sycl.reference.tq_decode_reference import (
     TQCache,
-    make_synthetic_tq_cache,
     ref_decode_single_query,
     pack_cache_for_kernel,
 )
@@ -37,21 +36,17 @@ def _truncate_cache(cache: TQCache, new_seqlen: int) -> TQCache:
     )
 
 
+@pytest.mark.parametrize("shape", ["small", "poc"])
 @pytest.mark.parametrize("preset,preset_id", [("k8v4", 0), ("k3v4_nc", 1)])
-def test_esimd_causal_matches_looped(to_xpu, preset, preset_id):
+def test_esimd_causal_matches_looped(make_case, to_xpu, shape, preset, preset_id):
     import turboquant_xpu_esimd as tq_esimd
 
-    # Small shape for correctness iteration speed.
-    N_spec, B, Hq, Hk, D, seqlen = 4, 2, 8, 2, 128, 512
-    cached_len = seqlen - N_spec  # queries see cached_len+1 .. cached_len+N_spec tokens
-
-    rng = np.random.default_rng(501)
-    k = rng.standard_normal((B, seqlen, Hk, D)).astype(np.float32) * 0.3
-    v = rng.standard_normal((B, seqlen, Hk, D)).astype(np.float32) * 0.3
-    cache_full = make_synthetic_tq_cache(k, v, preset=preset, D=D, Hk=Hk)
-    q = rng.standard_normal((N_spec, B, Hq, D)).astype(np.float32)
-    if preset == "k3v4_nc":
-        q = q @ cache_full.PiT
+    case = make_case(shape, preset, 501)
+    sh = case["sh"]
+    cache_full = case["cache"]
+    q = case["q"]
+    N_spec, B_, Hq, Hk, D, seqlen = sh["N_spec"], sh["B"], sh["Hq"], sh["Hk"], sh["D"], sh["seqlen"]
+    cached_len = seqlen - N_spec
 
     # Looped reference: per-query truncated cache.
     out_loop = np.zeros_like(q)
@@ -76,7 +71,7 @@ def test_esimd_causal_matches_looped(to_xpu, preset, preset_id):
         q_t.data_ptr(), kidx_t.data_ptr(), knorm_t.data_ptr(), kfp8_t.data_ptr(),
         vidx_t.data_ptr(), vscale_t.data_ptr(), vzero_t.data_ptr(), cent_t.data_ptr(),
         out_t.data_ptr(),
-        N_spec, B, Hq, Hk, D, seqlen,
+        N_spec, B_, Hq, Hk, D, seqlen,
         preset_id, 1, cached_len,
     )
     torch.xpu.synchronize()
