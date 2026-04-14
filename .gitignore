@@ -24,3 +24,9 @@ sycl/build/
 
 # VTune and Proton profiling result directories (large, local only)
 vt-*/
+
+# Jekyll / GitHub Pages
+site/_site/
+site/.jekyll-cache/
+site/vendor/
+.bundle/
