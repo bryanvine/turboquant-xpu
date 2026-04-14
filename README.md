@@ -37,6 +37,7 @@ See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) (Gemma4) and [docs/BE
 - [`docs/CROSS_MODEL_COMPARISON.md`](docs/CROSS_MODEL_COMPARISON.md) — why model architecture drives TurboQuant performance (Gemma4 vs Qwen3-30B)
 - [`docs/QUICK_WINS_RESULTS.md`](docs/QUICK_WINS_RESULTS.md) — **3× speedup from k8v4 preset** — preset and kernel-tuning sweep
 - [`docs/SYCL_KERNEL_DESIGN.md`](docs/SYCL_KERNEL_DESIGN.md) — 2000-word design brief for native SYCL kernels on Xe2/BMG-G31
+- [`docs/CUSTOM_KERNEL_FEASIBILITY.md`](docs/CUSTOM_KERNEL_FEASIBILITY.md) — feasibility study: custom kernel for TQ+spec decoding, 2.5–4× projected speedup on the verification path
 - [`docs/QWEN35_EXPLORATION.md`](docs/QWEN35_EXPLORATION.md) — analysis of whether TurboQuant unblocks Qwen3.5 (answer: orthogonal, but the SYCL research transfers)
 - [`docs/vllm_xpu_kernels_issue_271.md`](docs/vllm_xpu_kernels_issue_271.md) — mirror of my feasibility report filed with Intel
 
