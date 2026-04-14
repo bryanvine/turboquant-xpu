@@ -40,7 +40,7 @@
 ```bash
 icpx -fsycl -O2 src/_smoke_hello.cpp -o smoke_hello   # JIT fallback, no ocloc needed
 ```
-JIT compilation is transparent at runtime and produces correct results; startup latency for the first kernel launch is slightly higher. To restore AOT: `sudo apt install intel-oneapi-compiler-dpcpp-cpp-runtime` (which includes `ocloc`) and re-compile with `-fsycl-targets=intel_gpu_bmg_g21`.
+JIT compilation is transparent at runtime and produces correct results; startup latency for the first kernel launch is slightly higher. To restore AOT: `sudo apt install intel-ocloc` (ships in the Ubuntu `universe` archive, source package `intel-compute-runtime`) and re-compile with `-fsycl-targets=intel_gpu_bmg_g21`.
 
 ## Python env (after Task 3)
 `python3 -m venv .venv-sycl && source .venv-sycl/bin/activate && pip install -r sycl/requirements.txt`
