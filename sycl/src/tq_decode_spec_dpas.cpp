@@ -127,22 +127,32 @@ void tq_decode_spec_dpas(
   const sycl::range<2> global_range{std::size_t(B) * Hq, SG_SIZE};
   const sycl::range<2> local_range{1, SG_SIZE};
 
-  // DPAS tile geometry
+  // DPAS tile geometry. BLK_KV is deliberately locked to N_TILE=16 because the
+  // DPAS tile shape requires it — this is NOT the same knob as layout::BLOCK_KV_DEFAULT,
+  // which tunes the scalar kernel. Task 13's BLOCK_KV sweep does not apply here.
   static constexpr int M_TILE  = 8;   // # speculative queries per DPAS tile
   static constexpr int K_TILE  = 16;  // K dimension of DPAS tile (= SG_SIZE)
   static constexpr int N_TILE  = 16;  // N dimension = KV tokens per DPAS block
   static constexpr int BLK_KV  = 16;  // KV tokens per outer block (== N_TILE)
   static constexpr int D_DIM   = 128; // fixed for PoC
+  static_assert(K_TILE == turboquant_xpu_sycl::layout::SG_SIZE,
+                "DPAS K tile must equal sub-group size on Xe2.");
+  static_assert(BLK_KV == N_TILE, "Outer KV block must equal DPAS N tile.");
 
   // SLM sizes (per WG):
   //   scores_slm: [8, 16] fp32 — raw Q·Kᵀ scores from DPAS
-  //   k_fp16_slm: [16, D] fp16 — dequanted K tile
+  //   a_slm:      [8, 16] fp16 — Q fragment staged before joint_matrix_load
+  //   k_fp16_slm: [16, D]  fp16 — dequanted K tile
+  // The dedicated a_slm region replaces an earlier design that aliased it onto
+  // scores_slm; keeping them distinct removes a latent footgun where an
+  // early-exit could skip the separating barrier and corrupt scores.
   const int SCORES_SLM_FLOATS = M_TILE * N_TILE;             // 128
+  const int A_SLM_HALVES      = M_TILE * K_TILE;             // 128
   const int K_SLM_HALVES      = BLK_KV * D_DIM;              // 2048
 
-  // SLM: scores [128 fp32] + k_fp16 [2048 fp16]
   const std::size_t SLM_BYTES =
       SCORES_SLM_FLOATS * sizeof(float) +
+      A_SLM_HALVES      * sizeof(sycl::half) +
       K_SLM_HALVES      * sizeof(sycl::half);
 
   // Capture scalars for kernel lambda
@@ -167,10 +177,13 @@ void tq_decode_spec_dpas(
         const int hq = wg_id % hq_dim;
         const int h_k = hq / kv_grp;
 
-        // SLM pointers
+        // SLM pointers — dedicated, non-overlapping regions.
         float*       scores_slm = reinterpret_cast<float*>(&slm[0]);
-        sycl::half*  k_fp16_slm = reinterpret_cast<sycl::half*>(
+        sycl::half*  a_slm      = reinterpret_cast<sycl::half*>(
                                      &slm[SCORES_SLM_FLOATS * sizeof(float)]);
+        sycl::half*  k_fp16_slm = reinterpret_cast<sycl::half*>(
+                                     &slm[SCORES_SLM_FLOATS * sizeof(float)
+                                        + A_SLM_HALVES * sizeof(sycl::half)]);
 
         // Online softmax state: per-query (n) values
         // With M_TILE=8 rows, each lane holds ceil(8*16/16) = 8 accumulator
@@ -274,24 +287,10 @@ void tq_decode_spec_dpas(
           // So: load B col_major from (k_fp16_slm + d_slice) with stride=128.
 
           for (int ds = 0; ds < D_DIM; ds += K_TILE) {
-            // Load A: 8 queries × 16 dim elements, row_major, stride=D_DIM
-            // A[n, d] = q_rot[(n)*B*Hq*D + b*Hq*D + hq*D + ds + d]
-            // We load from a contiguous [8, 16] block. Since q is [N_spec, B, Hq, D],
-            // consecutive n values are D*Hq*B apart — NOT contiguous in memory.
-            // So we construct A in scores_slm (temporarily) then load.
-            // Use scores_slm as fp16 scratch for A: 8*16 = 128 halves = 256 bytes.
-            // scores_slm is 128 floats = 512 bytes. Overlap is safe since
-            // we write C_scores after this loop finishes.
-            sycl::half* a_slm = reinterpret_cast<sycl::half*>(scores_slm);
-
-            // Fill A_slm[n, d_in_tile] for n=0..7, d_in_tile=0..15
-            // Each lane handles a (n, d_local) pair: lane = n_row * 2 + col_half
-            // Better: lane 0..15 handles (n=lane/2, d_pair=lane%2*8 .. *8+7)?
-            // Simplest: each lane writes one row of 16 elements in a loop.
-            // With 16 lanes and 8 rows each lane handles ceil(8/16)*16 = 8 elements.
-            // Lane l fills rows where l*8/16 <= n < (l+1)*8/16... complex.
-            // Just let all lanes cooperate: for n in 0..7, d_local in 0..15
-            // total 128 elements, lane handles elements where (n*16+d_local)%16==lane.
+            // Construct A in its dedicated SLM region: 8 queries × 16 dim elements.
+            // q is laid out [N_spec, B, Hq, D] in global memory, so consecutive
+            // n rows are D*Hq*B apart — not contiguous. All 16 lanes cooperatively
+            // scatter-write 128 half-elements into a_slm.
             for (int elem = lane; elem < M_TILE * K_TILE; elem += SG_SIZE) {
               int n_row  = elem / K_TILE;
               int d_col  = elem % K_TILE;
