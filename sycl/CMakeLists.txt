@@ -12,9 +12,9 @@ endif()
 
 find_package(pybind11 REQUIRED CONFIG)
 
-# Default AOT target: bmg family (covers B70 / BMG-G31). Override with
-#   -DVLLM_XPU_AOT_DEVICES=intel_gpu_bmg_g21 on the cmake command line.
-# Set to empty string to force JIT compilation (no `ocloc` needed).
+# Default AOT target: BMG-G31 silicon (Intel Arc Pro B70, PCI 0xe223). Override
+# with e.g. -DVLLM_XPU_AOT_DEVICES=intel_gpu_bmg_g31 on the cmake command line,
+# or set to an empty string to force JIT compilation (no `ocloc` needed).
 if(NOT DEFINED VLLM_XPU_AOT_DEVICES)
   set(VLLM_XPU_AOT_DEVICES "intel_gpu_bmg_g31" CACHE STRING "AOT target list for SYCL build")
 endif()
@@ -28,8 +28,9 @@ if(NOT "${VLLM_XPU_AOT_DEVICES}" STREQUAL "")
   list(APPEND SYCL_FLAGS -fsycl-targets=${VLLM_XPU_AOT_DEVICES})
 endif()
 
-# SPV extensions used by the DPAS + 2D block I/O path — safe to enable for scalar
-# kernel too (compiler ignores if unused).
+# SPV extensions used by the DPAS + 2D block I/O path. These are SPIR-V
+# translator args applied during link, not during C++ compile — pass only via
+# target_link_options, otherwise icpx emits "argument unused during compilation".
 set(SPV_EXTS
   -Xspirv-translator
   -spirv-ext=+SPV_INTEL_subgroup_matrix_multiply_accumulate,+SPV_INTEL_2d_block_io,+SPV_INTEL_split_barrier
@@ -42,9 +43,10 @@ pybind11_add_module(turboquant_xpu_sycl
 )
 
 target_include_directories(turboquant_xpu_sycl PRIVATE include src)
-target_compile_options(turboquant_xpu_sycl PRIVATE ${SYCL_FLAGS} ${SPV_EXTS})
+target_compile_options(turboquant_xpu_sycl PRIVATE ${SYCL_FLAGS})
 target_link_options(turboquant_xpu_sycl PRIVATE
   ${SYCL_FLAGS}
+  ${SPV_EXTS}
   -fsycl-max-parallel-link-jobs=8
   -flink-huge-device-code
 )

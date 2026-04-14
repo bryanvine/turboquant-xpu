@@ -10,6 +10,7 @@ static sycl::queue& queue() {
 }
 
 void hello_identity(const float* in, float* out, std::size_t n) {
+  if (n == 0) return;
   auto& q = queue();
   float* d_in = sycl::malloc_device<float>(n, q);
   float* d_out = sycl::malloc_device<float>(n, q);
@@ -20,6 +21,7 @@ void hello_identity(const float* in, float* out, std::size_t n) {
 }
 
 void hello_scale(const float* in, float* out, std::size_t n, float s) {
+  if (n == 0) return;
   auto& q = queue();
   float* d_in = sycl::malloc_device<float>(n, q);
   float* d_out = sycl::malloc_device<float>(n, q);
