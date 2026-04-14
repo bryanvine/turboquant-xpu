@@ -22,6 +22,9 @@ sycl/build/
 *.spv
 .venv-sycl/
 
+# ESIMD PoC build artifacts
+sycl/esimd/build/
+
 # VTune and Proton profiling result directories (large, local only)
 vt-*/
 
