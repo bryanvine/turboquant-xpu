@@ -1,0 +1,482 @@
+========================================================================
+Fused-N_spec knob sweep — BMG-G31 (Arc Pro B70)
+Shape: N_spec=8, B=4, Hq=32, D=128, seqlen=8192
+Configs: 4×3×3 = 36 per (preset, mode)
+========================================================================
+
+--- Preset: turboquant_k8v4 ---
+
+  Mode: parallel
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+  BLOCK_KV  warps  splits        ms
+  ---------------------------------
+         4      1       8     4.135
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      16     3.537
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      32     3.045
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2       8     5.820
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      16     8.055
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      32    10.821
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4       8     5.339
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      16     5.214
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      32     6.759
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1       8     5.262
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      16     5.148
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      32     5.104
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2       8     6.248
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      16     6.402
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      32     6.651
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4       8     7.144
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      16     9.924
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      32    12.510
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1       8     6.985
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      16     6.932
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      32     7.030
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2       8    11.123
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      16    11.207
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      32    11.315
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4       8     6.530
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      16     6.554
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      32     6.668
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1       8    11.071
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      16    11.103
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      32    10.815
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2       8    20.191
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      16    20.295
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      32    20.403
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4       8     9.396
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      16     8.853
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      32     8.409
+
+  Mode: causal
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+  BLOCK_KV  warps  splits        ms
+  ---------------------------------
+         4      1       8     4.544
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      16     6.543
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      32     5.933
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2       8     5.284
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      16     6.517
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      32     8.916
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4       8    13.321
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      16    13.210
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      32    13.444
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1       8     5.303
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      16     5.160
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      32     5.191
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2       8     6.928
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      16     7.159
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      32     7.298
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4       8     7.345
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      16    10.335
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      32    12.870
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1       8     9.805
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      16     9.785
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      32     9.836
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2       8    12.762
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      16    12.793
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      32    12.910
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4       8     7.395
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      16     7.535
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      32     7.538
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1       8    10.856
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      16    10.970
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      32    10.446
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2       8    19.800
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      16    19.885
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      32    19.930
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4       8    10.151
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      16     9.720
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      32     9.378
+
+--- Preset: turboquant_k3v4_nc ---
+
+  Mode: parallel
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+  BLOCK_KV  warps  splits        ms
+  ---------------------------------
+         4      1       8     4.355
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      16     4.274
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      32     3.862
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2       8     5.777
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      16     7.779
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      32    11.243
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4       8    13.826
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      16    14.305
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      32    14.221
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1       8     5.804
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      16     5.771
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      32     5.846
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2       8     7.470
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      16     7.750
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      32     7.772
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4       8     8.755
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      16    11.361
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      32    12.715
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1       8    10.683
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      16    10.598
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      32    10.933
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2       8    14.315
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      16    14.243
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      32    14.278
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4       8     8.213
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      16     8.382
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      32     8.174
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1       8    15.632
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      16    15.610
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      32    15.204
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2       8    27.754
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      16    25.527
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      32    24.873
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4       8    13.857
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      16    13.824
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      32    13.209
+
+  Mode: causal
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+  BLOCK_KV  warps  splits        ms
+  ---------------------------------
+         4      1       8     5.087
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      16     5.033
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      1      32     4.778
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2       8     6.138
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      16     8.457
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      2      32    11.727
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4       8    14.771
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      16    15.130
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         4      4      32    15.073
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1       8     6.597
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      16     6.413
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      1      32     6.413
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2       8     8.627
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      16     8.748
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      2      32     8.949
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4       8     7.594
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      16    10.697
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+         8      4      32    12.220
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1       8    11.337
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      16    11.392
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      1      32    11.571
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2       8    14.807
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      16    15.003
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      2      32    14.950
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4       8     8.854
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      16     8.994
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        16      4      32     8.996
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1       8    16.075
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      16    15.760
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      1      32    15.652
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2       8    28.259
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      16    26.293
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      2      32    25.622
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4       8    15.285
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      16    15.259
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+        32      4      32    14.442
+
+========================================================================
+WINNERS (lowest ms/call per (preset, mode))
+========================================================================
+  preset                  mode        BKV  wrps   spl        ms
+  --------------------------------------------------------------
+  turboquant_k8v4         parallel      4     1    32     3.045
+  turboquant_k8v4         causal        4     1     8     4.544
+  turboquant_k3v4_nc      parallel      4     1    32     3.862
+  turboquant_k3v4_nc      causal        4     1    32     4.778
+
+--- Mode agreement ---
+  turboquant_k8v4: DIFFER  parallel=(4, 1, 32)  causal=(4, 1, 8)
+  turboquant_k3v4_nc: AGREE  (4, 1, 32)
+
+Full results written to: /apps/b70-vllm/turboquant-xpu/sycl/build/fused_tune.txt
+Done.

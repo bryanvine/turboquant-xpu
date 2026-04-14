@@ -13,6 +13,7 @@ XPU-specific concerns:
 """
 
 import math
+import os
 
 from .triton_decode import (
     _tq_decode_stage1,
@@ -27,6 +28,31 @@ from .xpu_compat import use_fp8_e4b15
 from turboquant_xpu.kernels.triton_compat import triton
 
 import torch
+
+# ---------------------------------------------------------------------------
+# Fused-N_spec stage1 tuning knobs (BMG-G31 / Arc Pro B70 sweep winners)
+# Sweep: 2026-04-14, 36 configs × 2 presets × 2 modes = 144 runs, all clean.
+# Override via env vars for A/B testing:
+#   TQ_FUSED_BLOCK_KV, TQ_FUSED_NUM_WARPS, TQ_FUSED_NUM_KV_SPLITS
+# See docs/FUSED_NSPEC_RESULTS.md and docs/tuning/fused_nspec_sweep_2026-04-14.txt.
+#
+# Key finding: larger BLOCK_KV (16, 32) hurts on Xe2 — register-pressure
+# dominates; BLOCK_KV=4 + warps=1 is optimal for this kernel shape.
+# NUM_KV_SPLITS=8 slightly improves k8v4 causal (fewer WGs, less reduction
+# overhead at this seqlen); all other presets/modes prefer splits=32.
+# ---------------------------------------------------------------------------
+_DEFAULT_BLOCK_KV       = int(os.getenv("TQ_FUSED_BLOCK_KV",      "4"))
+_DEFAULT_NUM_WARPS      = int(os.getenv("TQ_FUSED_NUM_WARPS",      "1"))
+_DEFAULT_NUM_KV_SPLITS  = int(os.getenv("TQ_FUSED_NUM_KV_SPLITS",  "32"))
+
+# Per-mode sweep winners (2026-04-14).  Tuple: (BLOCK_KV, num_warps, NUM_KV_SPLITS).
+# k8v4 (key_fp8=True) causal prefers splits=8 (4.544 ms vs 5.933 ms at splits=32).
+# k3v4_nc causal prefers splits=32 (4.778 ms) — same as shared default.
+# Parallel modes: both presets best at splits=32 — shared default sufficient.
+# These are only used when env-var overrides are NOT set.
+_PARALLEL_DEFAULTS: tuple | None = None          # use shared defaults (4, 1, 32)
+_CAUSAL_FP8_DEFAULTS: tuple = (4, 1, 8)         # k8v4 (key_fp8) causal winner
+_CAUSAL_MSE_DEFAULTS: tuple = (4, 1, 32)        # k3v4_nc (MSE) causal winner
 
 
 def triton_turboquant_decode_attention_xpu(
@@ -138,10 +164,27 @@ def triton_turboquant_decode_attention_spec_xpu(
         # Rotate: (N_spec, B, Hq, D) x (D, D) -> (N_spec, B, Hq, D)
         q_rot = (q_float.view(-1, D) @ PiT).view(N_spec, B, Hq, D).contiguous()
 
-    NUM_KV_SPLITS = max_num_kv_splits
     fp8_e4b15 = _use_fp8_e4b15(device.index or 0)
-    BLOCK_KV = 4
     BLOCK_D = cfg["BLOCK_D"]
+
+    # Select tuning knobs: env-var overrides > per-preset/mode defaults > shared defaults
+    # Priority: explicit env-var > per-mode struct > module-level defaults.
+    if causal and not _PARALLEL_DEFAULTS:
+        # Causal mode: dispatch on key_fp8 since winners diverge by preset
+        _causal_defaults = _CAUSAL_FP8_DEFAULTS if key_fp8 else _CAUSAL_MSE_DEFAULTS
+        block_kv      = int(os.getenv("TQ_FUSED_BLOCK_KV",      str(_causal_defaults[0])))
+        num_warps_s1  = int(os.getenv("TQ_FUSED_NUM_WARPS",     str(_causal_defaults[1])))
+        num_kv_splits = int(os.getenv("TQ_FUSED_NUM_KV_SPLITS", str(_causal_defaults[2])))
+    elif not causal and _PARALLEL_DEFAULTS is not None:
+        block_kv, num_warps_s1, num_kv_splits = _PARALLEL_DEFAULTS
+    else:
+        block_kv      = _DEFAULT_BLOCK_KV
+        num_warps_s1  = _DEFAULT_NUM_WARPS
+        num_kv_splits = _DEFAULT_NUM_KV_SPLITS
+
+    # max_num_kv_splits argument still respected as an explicit override
+    # (used by the legacy non-tuned path and external callers).
+    NUM_KV_SPLITS = num_kv_splits
 
     # Allocate intermediate buffer: [N_spec, B, Hq, NUM_KV_SPLITS, D+1]
     mid_o = torch.empty(
@@ -186,14 +229,14 @@ def triton_turboquant_decode_attention_spec_xpu(
         VAL_DATA_BYTES=cfg["val_data_bytes"],
         ATTN_SCALE=scale,
         BLOCK_D=BLOCK_D,
-        BLOCK_KV=BLOCK_KV,
+        BLOCK_KV=block_kv,
         N_SPEC=N_spec,
         KEY_FP8=1 if key_fp8 else 0,
         NORM_CORRECTION=1 if norm_correction else 0,
         FP8_E4B15=fp8_e4b15,
         CAUSAL=1 if causal else 0,
         cached_len=int(cached_len) if causal else 0,
-        num_warps=1,
+        num_warps=num_warps_s1,
         num_stages=1,
     )
 

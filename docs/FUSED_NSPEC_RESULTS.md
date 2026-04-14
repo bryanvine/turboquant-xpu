@@ -110,3 +110,54 @@ The speedup remains well above the 1.3× anomaly threshold. The 4.22×
 workload; its causal equivalent is 2.90×.
 
 Commit: `c0a69a3`. Test: `tests/test_fused_nspec.py::test_fused_causal_matches_looped`.
+
+---
+
+## Autotune (2026-04-14)
+
+Sweep over BLOCK_KV ∈ {4, 8, 16, 32}, num_warps ∈ {1, 2, 4}, NUM_KV_SPLITS ∈ {8, 16, 32}.
+36 configs × 2 presets × 2 modes = 144 runs total.  All 144 ran cleanly — zero SKIPs,
+zero register-spill errors (BLOCK_KV=32 + warps=4 compiled and ran, just slowly).
+Full per-config numbers: `docs/tuning/fused_nspec_sweep_2026-04-14.txt`.
+
+### Key finding
+
+Larger BLOCK_KV **hurts** on Xe2.  The projected 1.5–2.5× speedup from BLOCK_KV 4→16
+did not materialise: BLOCK_KV=4 wins every category.  Explanation: the fused kernel
+carries `q_all[8,128]` + `acc[8,128]` + `scores[8,BLOCK_KV]` ≈ 8.5 KB of per-thread
+live state; doubling BLOCK_KV increases that proportionally and causes the Xe2 register
+file to spill to scratch, destroying throughput.  num_warps=1 is optimal for the same
+reason.  NUM_KV_SPLITS=32 is best for both presets in parallel mode; k8v4 causal
+prefers splits=8 (fewer WGs avoids per-split reduction overhead at this seqlen).
+
+### Winners per (preset, mode)
+
+| mode | preset | BLOCK_KV | num_warps | NUM_KV_SPLITS | ms/call |
+|---|---|---:|---:|---:|---:|
+| parallel | turboquant_k8v4   | 4 | 1 | 32 | 3.041 |
+| parallel | turboquant_k3v4_nc | 4 | 1 | 32 | 3.799 |
+| causal   | turboquant_k8v4   | 4 | 1 |  8 | 3.204 |
+| causal   | turboquant_k3v4_nc | 4 | 1 | 32 | 4.749 |
+
+Modes mostly agree (BLOCK_KV=4, warps=1, splits=32).  k8v4 causal is the exception:
+splits=8 saves ~1.7 ms over splits=32 (3.204 vs 4.922ms pre-tune).  The launcher
+dispatches splits=8 when `causal=True` and `key_fp8=True`; all other paths use splits=32.
+
+### End-to-end numbers after applying winners
+
+PoC shape: N_spec=8, B=4, Hq=32, D=128, seqlen=8192, cached_len=8184.
+
+| mode | preset | looped (ms) | fused tuned (ms) | tuned speedup | vs pre-tune fused |
+|---|---|---:|---:|---:|---:|
+| parallel | turboquant_k8v4    | 8.808 | 3.041 | 2.90x | +0.14x (was 2.76x) |
+| parallel | turboquant_k3v4_nc | 14.046 | 3.799 | 3.70x | +0.18x (was 3.52x) |
+| causal   | turboquant_k8v4    | 8.821 | 3.204 | 2.75x | +0.20x (was 2.55x) |
+| causal   | turboquant_k3v4_nc | 14.197 | 4.749 | 2.99x | +0.09x (was 2.90x) |
+
+### Conclusion
+
+The sweep confirmed the existing BLOCK_KV=4/warps=1 is the hardware optimum.
+The net gain from this tuning exercise is modest (+0.09–0.20× speedup) and comes
+entirely from the NUM_KV_SPLITS winner (splits=8 for k8v4 causal), not from the
+projected larger-tile wins.  The launcher now reads env-var overrides so future
+A/B experiments can test specific configs without code changes.
