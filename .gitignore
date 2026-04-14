@@ -21,3 +21,6 @@ sycl/build/
 *.o
 *.spv
 .venv-sycl/
+
+# VTune and Proton profiling result directories (large, local only)
+vt-*/
