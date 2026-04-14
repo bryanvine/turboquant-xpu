@@ -103,26 +103,29 @@ void tq_decode_spec_esimd(
             } else {
               const uint8_t* kp_idx = d_kidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
               float norm = d_knorm[(b * seqlen_v + kv) * hk_total + h_k];
-              esimd::simd<float, D_DIM> k_f;
-              for (int d = 0; d < D_DIM; ++d) {
-                k_f[d] = d_cent[kp_idx[d] & (K3_CENTROIDS - 1)] * norm;
-              }
+              esimd::simd<uint8_t, D_DIM> idx_vec;
+              idx_vec.copy_from(kp_idx);
+              esimd::simd<uint32_t, D_DIM> offsets =
+                  esimd::simd<uint32_t, D_DIM>(idx_vec & uint8_t(K3_CENTROIDS - 1))
+                  * uint32_t(sizeof(float));
+              esimd::simd<float, D_DIM> k_f =
+                  esimd::gather<float, D_DIM>(d_cent, offsets) * norm;
               esimd::simd<sycl::half, D_DIM> k_h = k_f;
               k_tile.template select<D_DIM, 1>(t * D_DIM) = k_h;
             }
           }
 
           // --- Dequant V tile [BLK_KV][D] (fp16) into v_tile register ---
+          // V is uint8; dequant is v_f = float(v_u8) * v_scale + v_zero. Vectorize.
           esimd::simd<sycl::half, BLK_KV * D_DIM> v_tile(sycl::half(0.f));
           for (int t = 0; t < BLK_KV; ++t) {
             int kv = kv0 + t;
             const uint8_t* vp = d_vidx + (((b * seqlen_v + kv) * hk_total + h_k) * D_DIM);
             float vs = d_vscale[(b * seqlen_v + kv) * hk_total + h_k];
             float vz = d_vzero[(b * seqlen_v + kv) * hk_total + h_k];
-            esimd::simd<float, D_DIM> v_f;
-            for (int d = 0; d < D_DIM; ++d) {
-              v_f[d] = float(vp[d]) * vs + vz;
-            }
+            esimd::simd<uint8_t, D_DIM> v_u8;
+            v_u8.copy_from(vp);
+            esimd::simd<float, D_DIM> v_f = esimd::simd<float, D_DIM>(v_u8) * vs + vz;
             esimd::simd<sycl::half, D_DIM> v_h = v_f;
             v_tile.template select<D_DIM, 1>(t * D_DIM) = v_h;
           }
