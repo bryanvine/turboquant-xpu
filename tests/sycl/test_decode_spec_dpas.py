@@ -25,7 +25,12 @@ def test_dpas_matches_reference_small(make_case, preset, preset_id):
 
 @pytest.mark.parametrize("preset,preset_id", [("k8v4", 0), ("k3v4_nc", 1)])
 def test_dpas_matches_scalar_poc(make_case, preset, preset_id):
-    """At PoC scale, DPAS and scalar must agree bit-for-bit mod float rounding."""
+    """At PoC scale, DPAS must agree with the scalar kernel within fp32 tolerance.
+
+    Not bit-exact: DPAS uses fp16/bf16 intermediates in the systolic pipe while
+    the scalar kernel is fp32 throughout. `atol=5e-3, rtol=1e-2` matches the
+    tolerance we use vs the numpy reference.
+    """
     import turboquant_xpu_sycl as tq_sycl
     case = make_case(shape="poc", preset=preset, seed=13)
     q = case["q"]; cache = case["cache"]
