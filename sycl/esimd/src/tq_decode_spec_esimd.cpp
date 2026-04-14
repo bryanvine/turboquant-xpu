@@ -55,21 +55,19 @@ void tq_decode_spec_esimd(
   const auto* d_cent   = reinterpret_cast<const float*>(centroids);
   auto* d_out          = reinterpret_cast<float*>(out);
 
-  // Grid: one WG per (b, h_q). Thread 0 of each WG does the real work.
-  const sycl::range<2> global_range{std::size_t(B) * Hq, SG_SIZE};
-  const sycl::range<2> local_range{1, SG_SIZE};
+  // One ESIMD thread per (b, h_q). Each ESIMD thread is a SIMD-16 work-item
+  // that owns the full compute for a single (b, h_q) decode.
+  const sycl::range<1> global_range{std::size_t(B) * Hq};
+  const sycl::range<1> local_range{1};
 
   q.submit([&](sycl::handler& h) {
     h.parallel_for<class tq_decode_spec_esimd_dpas_full>(
-      sycl::nd_range<2>(global_range, local_range),
-      [=](sycl::nd_item<2> it) SYCL_ESIMD_KERNEL {
+      sycl::nd_range<1>(global_range, local_range),
+      [=](sycl::nd_item<1> it) SYCL_ESIMD_KERNEL {
         const int wg_id = it.get_global_id(0);
-        const int lane  = it.get_local_id(1);
         const int b  = wg_id / hq_total;
         const int hq = wg_id % hq_total;
         const int h_k = hq / kv_group;
-
-        if (lane != 0) return;
 
         // Online softmax state (per-query).
         float m_prev[M_TILE];
@@ -88,6 +86,18 @@ void tq_decode_spec_esimd(
           int eff = c_len + n + 1;
           if (eff > seqlen_v) eff = seqlen_v;
           eff_end_q[n] = is_causal ? eff : seqlen_v;
+        }
+
+        // Hoist Q load: Q is [N_spec, D=128] for one (b, hq), ~2 KB fp16 —
+        // fits comfortably in register and is reused across all seqlen/BLK_KV
+        // KV iterations. Preload fp16 once.
+        esimd::simd<sycl::half, M_TILE * D_DIM> q_all(sycl::half(0.f));
+        for (int n = 0; n < n_spec; ++n) {
+          const float* q_ptr = d_q + (((n * b_total + b) * hq_total + hq) * D_DIM);
+          esimd::simd<float, D_DIM> q_f;
+          q_f.copy_from(q_ptr);
+          esimd::simd<sycl::half, D_DIM> q_h = q_f;
+          q_all.template select<D_DIM, 1>(n * D_DIM) = q_h;
         }
 
         for (int kv0 = 0; kv0 < seqlen_v; kv0 += BLK_KV) {
@@ -133,12 +143,11 @@ void tq_decode_spec_esimd(
           // --- DPAS Q·Kᵀ → c_scores [M_TILE × N_TILE] ---
           esimd::simd<float, M_TILE * N_TILE> c_scores(0.f);
           for (int ds = 0; ds < D_DIM; ds += K_TILE) {
+            // A: rebuild fp16 [M_TILE][K_TILE] slice from the hoisted q_all.
             esimd::simd<sycl::half, M_TILE * K_TILE> a_reg(sycl::half(0.f));
             for (int n = 0; n < n_spec; ++n) {
-              const float* q_ptr = d_q + (((n * b_total + b) * hq_total + hq) * D_DIM) + ds;
-              esimd::simd<float, K_TILE> q_slice;
-              q_slice.copy_from(q_ptr);
-              a_reg.template select<K_TILE, 1>(n * K_TILE) = esimd::simd<sycl::half, K_TILE>(q_slice);
+              a_reg.template select<K_TILE, 1>(n * K_TILE) =
+                  q_all.template select<K_TILE, 1>(n * D_DIM + ds);
             }
             // B_vnni [K/2][N_TILE][2] from k_tile: k_tile[t=nc][d = ds+2kp+i]
             esimd::simd<sycl::half, K_TILE * N_TILE> b_reg;

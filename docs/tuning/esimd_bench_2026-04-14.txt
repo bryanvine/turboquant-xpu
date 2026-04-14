@@ -1,0 +1,54 @@
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+Device: Intel(R) Graphics [0xe223]
+PoC shape: {'N_spec': 8, 'B': 4, 'Hq': 32, 'Hk': 4, 'D': 128, 'seqlen': 8192}
+Warmup: 5; timed: 20 (Triton legs: 10)
+
+[k8v4] building case …
+[k8v4] running Triton×N_spec (parallel) …
+[k8v4]   triton × N = 8.950 ms
+[k8v4] running zc scalar (parallel) …
+[k8v4]   zc_scalar  = 218.492 ms
+[k8v4] running fused Triton causal …
+[k8v4]   fused_triton = 3.214 ms
+[k8v4] running ESIMD causal …
+[k8v4]   esimd      = 192.219 ms
+
+[k3v4_nc] building case …
+[k3v4_nc] running Triton×N_spec (parallel) …
+[k3v4_nc]   triton × N = 13.716 ms
+[k3v4_nc] running zc scalar (parallel) …
+[k3v4_nc]   zc_scalar  = 248.557 ms
+[k3v4_nc] running fused Triton causal …
+[k3v4_nc]   fused_triton = 4.834 ms
+[k3v4_nc] running ESIMD causal …
+[k3v4_nc]   esimd      = 186.376 ms
+
+
+preset           triton×N    zc_scalar   fused_trit      esimd
+----------------------------------------------------------------
+k8v4                8.950      218.492        3.214    192.219
+k3v4_nc            13.716      248.557        4.834    186.376
+
+preset         esimd/zc   esimd/trit×N    esimd/fused
+--------------------------------------------------------
+k8v4              0.88×         21.48×         59.81×
+k3v4_nc           0.75×         13.59×         38.55×
+
+ESIMD DECISION: MARGINAL — between 0.5× and 0.8× zc_scalar. See doc.
