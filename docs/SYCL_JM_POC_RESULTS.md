@@ -39,7 +39,7 @@ These are the optimizations expected to close the remaining gap to fused Triton,
 
 ## Interpretation
 
-**What moved the needle: DPAS for P·V, not split-KV.** Across the task progression, the per-stage timings tell a clear story. Task 6 (scalar kernel + split-KV, no DPAS) measured 223 ms at PoC causal — split-KV parallelism was in place but didn't bring the runtime anywhere near competitive. Task 7 (Q·K via DPAS, P·V still scalar) actually regressed slightly to 244 ms: the DPAS savings on Q·Kᵀ were eaten by lane-0-only SLM fill overhead, which serialized the sub-group and added round-trip cost. Task 8 (full DPAS: Q·Kᵀ AND P·V via joint_matrix, plus scalar rescale) dropped to 96.9 ms — a genuine 2.5× improvement over Task 7 — because the inner `acc[n][d] += p * v[d]` loop (1024 scalar multiplications per row per KV block) was replaced by a DPAS tile. That single change made the DPAS useful. Split-KV established the partitioned execution model but contributed no runtime improvement in isolation; the benefit came entirely from replacing the scalar P·V loop with DPAS.
+**What moved the needle: DPAS for P·V, not split-KV.** Across the task progression, the per-stage timings tell a clear story (see [`docs/tuning/sycl_jm_per_task_timings_2026-04-15.md`](tuning/sycl_jm_per_task_timings_2026-04-15.md) for the commit-by-commit progression). Task 6 (scalar kernel + split-KV, no DPAS) measured 223 ms at PoC causal — split-KV parallelism was in place but didn't bring the runtime anywhere near competitive. Task 7 (Q·K via DPAS, P·V still scalar) actually regressed slightly to 244 ms: the DPAS savings on Q·Kᵀ were eaten by lane-0-only SLM fill overhead, which serialized the sub-group and added round-trip cost. Task 8 (full DPAS: Q·Kᵀ AND P·V via joint_matrix, plus scalar rescale) dropped to 96.9 ms — a genuine 2.5× improvement over Task 7 — because the inner `acc[n][d] += p * v[d]` loop (1024 scalar multiplications per row per KV block) was replaced by a DPAS tile. That single change made the DPAS useful. Split-KV established the partitioned execution model but contributed no runtime improvement in isolation; the benefit came entirely from replacing the scalar P·V loop with DPAS.
 
 **Position vs baselines.** From Task 6's first real measurement to Task 8's phase (a) completion, fused Triton causal ran at 3.229 ms throughout. The JM kernel moved from 70× slower (Task 6 scalar) to 76× slower (Task 7, DPAS regression) to 30× slower (Task 8, full DPAS). Even the best phase (a) result is 30× from the production baseline. zc_scalar at 218 ms is the only baseline sycl_jm beats (0.44×, or roughly half the time), but zc_scalar is a software-fallback reference, not a competitive target. Against triton×N (18.5 ms, the naive per-token Triton path), sycl_jm is 5.23× slower. The feasibility doc's 2.5–4× better-than-fused projection assumed DPAS throughput on BMG-G31 plus SIMD16 cooperation from the start; phase (a)'s scalar dequant, scalar softmax, and lane-0-only SLM fills left most of that throughput on the table.
 
@@ -63,12 +63,19 @@ Phase (b) optimizations — SIMD16 cooperation across dequant + softmax, SLM K-t
 4. `sycl/jm/src/tq_decode_spec_jm_stage1.cpp` — the phase (a) kernel; phase (b) changes start here.
 5. `sycl/reference/tq_decode_reference.py` — correctness ground truth, unchanged.
 
-## Honest unknowns (filled in at execution time)
+## Answered questions at phase (a) close
 
-- [x] **Which `joint_matrix` B layout worked?** `row_major` with a per-iteration pre-transpose of K and V tiles into `b_tile`/`b_pv` SLM buffers. The nightly's `joint_matrix_load` accepted `layout::row_major` for `use::b` — did NOT need `ext_intel_packed`. (Task 7 + Task 8 implementations.)
-- [x] **Did the nightly's AOT list include `intel_gpu_bmg_g31`?** Not verified — plan was JIT-only for phase (a). The nightly header at `/tmp/intel-llvm-nightly/include/sycl/ext/oneapi/matrix/matrix-unified.hpp` had BMG-G31 populated in `get_matrix_combinations()` because the smoke + kernel ran end-to-end via JIT. AOT target availability remains unverified.
-- [x] **Register-spill report?** Not extracted. The scalar `acc[M_TILE=8][D_DIM=128]` fp32 stack array is 4 KB per work-item — almost certainly spilling to private memory / L1 at minimum. This is inferred from size; the spill contribution to runtime is unquantified and is the first thing to measure if phase (b) opens.
-- [x] **Was `joint_matrix_apply` usable for the `acc_frag` rescale?** Not attempted. Phase (a) used the round-trip-through-`acc_scalar` pattern for auditability. Whether `joint_matrix_apply` supports per-row scalar multipliers in the 2026-04-13 nightly is a phase (b) question.
+**Q: Which `joint_matrix` B layout worked?**  
+A: `row_major` with a per-iteration pre-transpose of K and V tiles into `b_tile`/`b_pv` SLM buffers. The nightly's `joint_matrix_load` accepted `layout::row_major` for `use::b` — did NOT need `ext_intel_packed`. (Task 7 + Task 8 implementations.)
+
+**Q: Did the nightly's AOT list include `intel_gpu_bmg_g31`?**  
+A: Not verified — plan was JIT-only for phase (a). The nightly header at `/tmp/intel-llvm-nightly/include/sycl/ext/oneapi/matrix/matrix-unified.hpp` had BMG-G31 populated in `get_matrix_combinations()` because the smoke + kernel ran end-to-end via JIT. AOT target availability remains unverified.
+
+**Q: Register-spill report?**  
+A: Not extracted. The scalar `acc[M_TILE=8][D_DIM=128]` fp32 stack array is 4 KB per work-item — almost certainly spilling to private memory / L1 at minimum. This is inferred from size; the spill contribution to runtime is unquantified and is the first thing to measure if phase (b) opens.
+
+**Q: Was `joint_matrix_apply` usable for the `acc_frag` rescale?**  
+A: Not attempted. Phase (a) used the round-trip-through-`acc_scalar` pattern for auditability. Whether `joint_matrix_apply` supports per-row scalar multipliers in the 2026-04-13 nightly is a phase (b) question.
 
 ## Commits on the branch
 
