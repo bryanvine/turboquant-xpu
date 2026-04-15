@@ -1,0 +1,35 @@
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+sycl_arch not recognized: 0
+Device: Intel(R) Graphics [0xe223]
+PoC shape: {'N_spec': 8, 'B': 4, 'Hq': 32, 'Hk': 4, 'D': 128, 'seqlen': 8192}
+Preset: k8v4
+Warmup: 5; timed: 20 (Triton legs: 10)
+
+[triton×N_spec (parallel)] running …
+  triton × N = 18.516 ms
+[zc_scalar (parallel)] running …
+  zc_scalar  = 218.066 ms
+[fused Triton causal] running …
+  fused_trit = 3.229 ms
+[SYCL JM causal (subprocess)] running …
+  sycl_jm    = 96.921 ms
+
+preset         triton×N    zc_scalar   fused_trit    sycl_jm
+------------------------------------------------------------
+k8v4             18.516      218.066        3.229     96.921
+
+ratios            jm/zc  jm/triton×N     jm/fused
+------------------------------------------------
+k8v4              0.44×        5.23×       30.02×
+
+PHASE (A) DECISION: PHASE (A) NO-GO — sycl_jm > 30 ms. Profile + stop.
