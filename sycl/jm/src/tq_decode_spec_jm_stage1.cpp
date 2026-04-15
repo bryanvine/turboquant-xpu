@@ -25,9 +25,11 @@ void tq_decode_spec_jm_stage1(
   if (D != D_DIM)
     throw std::runtime_error("jm PoC assumes D == 128");
   if (preset_id != PRESET_K8V4)
-    throw std::runtime_error("jm phase (a) supports k8v4 only; k3v4_nc is phase (b)");
+    throw std::runtime_error("jm phase (a) supports k8v4 only");
   if (seqlen % BLK_KV != 0)
     throw std::runtime_error("seqlen must be BLK_KV-aligned");
+  if (seqlen % NUM_KV_SPLITS != 0)
+    throw std::runtime_error("seqlen must be NUM_KV_SPLITS-aligned");
 
   auto& q = queue();
   const int kv_group = Hq / Hk;
@@ -39,6 +41,7 @@ void tq_decode_spec_jm_stage1(
   const int hq_total = Hq;
   const int hk_total = Hk;
   const int seqlen_v = seqlen;
+  const int seqlen_per_split = seqlen / NUM_KV_SPLITS;
 
   const auto* d_q      = reinterpret_cast<const float*>(q_rot);
   const auto* d_kfp8   = reinterpret_cast<const float*>(k_fp8);
@@ -48,26 +51,21 @@ void tq_decode_spec_jm_stage1(
   auto* d_pout         = reinterpret_cast<float*>(partial_out);
   auto* d_plse         = reinterpret_cast<float*>(partial_lse);
 
-  // Task 5: no split-KV. One work-item per (b, hq). Writes into partial slot 0.
-  // Fill other slots with sentinels so stage 2 can ignore them (lse = -INFINITY).
-  q.memset(d_plse, 0, sizeof(float) * NUM_KV_SPLITS * n_spec * B * Hq).wait();
-  // Then mark splits 1..N-1 as -INF so stage 2's log-sum-exp ignores them.
+  // Grid: one work-item per (b, hq, split).
+  const sycl::range<1> global_range{std::size_t(B) * Hq * NUM_KV_SPLITS};
   q.submit([&](sycl::handler& h) {
-    h.parallel_for(sycl::range<1>{std::size_t(NUM_KV_SPLITS - 1) * n_spec * B * Hq},
-      [=](sycl::id<1> i) {
-        d_plse[n_spec * B * Hq + i[0]] = -std::numeric_limits<float>::infinity();
-      });
-  }).wait();
-
-  const sycl::range<1> global_range{std::size_t(B) * Hq};
-  q.submit([&](sycl::handler& h) {
-    h.parallel_for<class tq_jm_stage1_scalar>(
+    h.parallel_for<class tq_jm_stage1_split>(
       global_range,
       [=](sycl::id<1> id) {
-        const int wg_id = id[0];
-        const int b  = wg_id / hq_total;
-        const int hq = wg_id % hq_total;
+        const int global_id = id[0];
+        const int split_id = global_id % NUM_KV_SPLITS;
+        const int bh       = global_id / NUM_KV_SPLITS;
+        const int b  = bh / hq_total;
+        const int hq = bh % hq_total;
         const int h_k = hq / kv_group;
+
+        const int split_start = split_id * seqlen_per_split;
+        const int split_end   = split_start + seqlen_per_split;
 
         float m_prev[M_TILE];
         float l_prev[M_TILE];
@@ -78,6 +76,7 @@ void tq_decode_spec_jm_stage1(
           for (int d = 0; d < D_DIM; ++d) acc[n][d] = 0.f;
         }
 
+        // Per-query effective seq_len (for causal mode).
         int eff_end_q[M_TILE];
         for (int n = 0; n < M_TILE; ++n) {
           int eff = c_len + n + 1;
@@ -85,7 +84,8 @@ void tq_decode_spec_jm_stage1(
           eff_end_q[n] = is_causal ? eff : seqlen_v;
         }
 
-        for (int kv0 = 0; kv0 < seqlen_v; kv0 += BLK_KV) {
+        // Iterate ONLY this split's KV range. Clip by eff_end per-row inside.
+        for (int kv0 = split_start; kv0 < split_end; kv0 += BLK_KV) {
           float scores[M_TILE][BLK_KV];
           for (int n = 0; n < n_spec; ++n) {
             const float* q_ptr = d_q + (((n * b_total + b) * hq_total + hq) * D_DIM);
@@ -103,7 +103,6 @@ void tq_decode_spec_jm_stage1(
           }
 
           for (int n = 0; n < n_spec; ++n) {
-            // row_has_any (causal mask may eliminate all positions)
             bool any_valid = false;
             float m_local = -std::numeric_limits<float>::infinity();
             for (int t = 0; t < BLK_KV; ++t) {
@@ -137,23 +136,23 @@ void tq_decode_spec_jm_stage1(
           }
         }
 
-        // Write the normalized partial for split 0.
-        // Stage 2 expects partial_out[s] = acc_s / l_s (normalized) so that
-        // it can combine splits via weighted sum: sum_s exp(lse_s - m) * partial_out[s].
+        // Write per-split partial (NORMALIZED — stage 2 expects acc/l) and lse.
+        //   partial_out offset = (((split * n_spec + n) * b_total + b) * hq_total + hq) * D
+        //   partial_lse offset =  ((split * n_spec + n) * b_total + b) * hq_total + hq
         for (int n = 0; n < n_spec; ++n) {
-          // Flat index: partial_out[split=0, n, b, hq, d]
-          //   offset = (((0 * n_spec + n) * b_total + b) * hq_total + hq) * D_DIM + d
-          //   = ((n * b_total + b) * hq_total + hq) * D_DIM + d
-          float* o_ptr = d_pout + (((n * b_total + b) * hq_total + hq) * D_DIM);
-          float inv_l = (l_prev[n] > 0.f) ? 1.0f / l_prev[n] : 0.0f;
-          for (int d = 0; d < D_DIM; ++d) o_ptr[d] = acc[n][d] * inv_l;
-          // lse = m + log(l). If row had zero valid tokens (impossible when not causal),
-          // leave lse = 0 (memset). For split 0 with causal, row always has at least
-          // cached_len+0+1 tokens so m_prev[n] is finite.
-          float lse = (l_prev[n] > 0.f)
-                        ? m_prev[n] + sycl::log(l_prev[n])
-                        : -std::numeric_limits<float>::infinity();
-          d_plse[((n * b_total + b) * hq_total + hq)] = lse;
+          float* o_ptr = d_pout +
+              ((((split_id * n_spec + n) * b_total + b) * hq_total + hq) * D_DIM);
+          float lse;
+          if (l_prev[n] <= 0.f) {
+            // this split contributed no valid tokens
+            lse = -std::numeric_limits<float>::infinity();
+            for (int d = 0; d < D_DIM; ++d) o_ptr[d] = 0.f;
+          } else {
+            float inv_l = 1.0f / l_prev[n];
+            for (int d = 0; d < D_DIM; ++d) o_ptr[d] = acc[n][d] * inv_l;
+            lse = m_prev[n] + sycl::log(l_prev[n]);
+          }
+          d_plse[((split_id * n_spec + n) * b_total + b) * hq_total + hq] = lse;
         }
       });
   }).wait();
