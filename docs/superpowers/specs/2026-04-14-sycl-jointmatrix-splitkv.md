@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-14
 **Author:** Bryan Vine
-**Branch:** `sycl-jm-option4` (off `main` at `a6851ac`).
+**Branch:** `sycl-jointmatrix-splitkv` (off `main` at `a6851ac`).
 **Related:**
 - Precursor: `docs/SYCL_POC_RESULTS.md` (Option A′ gated on libsycl ABI resolution).
 - Precursor: `docs/ESIMD_POC_RESULTS.md` (Option 5 — ESIMD landed MARGINAL).
@@ -25,7 +25,7 @@ The ESIMD PoC delivered a specific diagnostic: its ~186 ms wall time decomposed 
 | **(b)** | add SIMD16 vectorized softmax + SLM K reuse + k3v4_nc + NUM_KV_SPLITS autotune | 4–6 weeks | phase (b) wall ≤ **10 ms** and ≤ 2× fused Triton on at least one preset |
 | **(c)** | vLLM backend integration + ABI resolution (or Level Zero IPC bridge) + upstream PR | open-ended | ships or is closed as a documented negative result |
 
-Stopping at any phase is acceptable — each phase's deliverable is a self-contained data point. The branch `sycl-jm-option4` carries all phases sequentially; each phase's decision commit gets a tag (`phase-a-decision-YYYY-MM-DD`).
+Stopping at any phase is acceptable — each phase's deliverable is a self-contained data point. The branch `sycl-jointmatrix-splitkv` carries all phases sequentially; each phase's decision commit gets a tag (`phase-a-decision-YYYY-MM-DD`).
 
 ## Architecture
 
@@ -81,7 +81,7 @@ turboquant-xpu/
 │   ├── SYCL_JM_POC_RESULTS.md          # phase (a) writeup (filled at end of phase a)
 │   └── superpowers/
 │       ├── specs/
-│       │   └── 2026-04-14-sycl-jm-option4-phased.md  # this doc
+│       │   └── 2026-04-14-sycl-jointmatrix-splitkv.md  # this doc
 │       └── plans/
 │           └── 2026-04-14-sycl-jm-phase-a.md         # phase (a) implementation plan (to be created by writing-plans)
 └── .venv-jm/                           # nightly-env Python (numpy + pybind11, NO torch)
