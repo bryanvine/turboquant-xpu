@@ -102,48 +102,155 @@ def _numpy_reference(case, req) -> np.ndarray:
     return out_loop
 
 
-def _run_kernel(case, req):
-    """Run the JM kernel once via malloc_device + memcpy. Returns out as numpy."""
+def _run_kernel(case, req) -> np.ndarray:
+    """Run the JM kernel once via malloc_device + memcpy. Returns out as numpy [N_spec, B, Hq, D] fp32."""
     import turboquant_xpu_sycl_jm as jm
-    # No torch — use the module's own helpers to allocate USM. We don't have
-    # dedicated helpers yet; for phase (a), expose a tiny allocator via SYCL
-    # from the child, or call into numpy+ctypes using the Level Zero runtime.
-    # SIMPLEST APPROACH: bind helper allocators in the pybind wrapper.
-    #
-    # For phase (a), extend the pybind module with two helpers (see Task 6 note):
-    #   jm.alloc_device_f32(n_elements) -> uintptr_t
-    #   jm.alloc_device_u8(n_elements)  -> uintptr_t
-    #   jm.memcpy_to_device(dst_ptr, numpy_array) -> None
-    #   jm.memcpy_from_device(src_ptr, numpy_array) -> None
-    #   jm.free_device(ptr) -> None
-    #   jm.synchronize() -> None
-    #
-    # These are added in Task 5 Step 3 (they're trivial). For Task 4, we only
-    # run up to the `import turboquant_xpu_sycl_jm` line, then call the kernel
-    # with dummy zero pointers and CATCH the RuntimeError — which is the whole
-    # point of the failing test.
-    raise NotImplementedError("_run_kernel deferred to Task 5")
+    q = case["q"]
+    cache = case["cache"]
+    cached_len = case["cached_len"]
+    sh = case["sh"]
+    N_spec, B_, Hq, Hk, D, seqlen = sh["N_spec"], sh["B"], sh["Hq"], sh["Hk"], sh["D"], sh["seqlen"]
+
+    packed = pack_cache_for_kernel(cache)
+    preset_id = 0 if req["preset"] == "k8v4" else 1
+
+    # Allocate USM buffers.
+    def alloc_and_copy_f32(arr):
+        arr = np.ascontiguousarray(arr, dtype=np.float32)
+        p = jm.alloc_device_f32(arr.size)
+        jm.memcpy_to_device_f32(p, arr)
+        return p, arr.size
+    def alloc_and_copy_u8(arr):
+        arr = np.ascontiguousarray(arr, dtype=np.uint8)
+        p = jm.alloc_device_u8(arr.size)
+        jm.memcpy_to_device_u8(p, arr)
+        return p, arr.size
+
+    q_p, _    = alloc_and_copy_f32(q)
+    kf_p, _   = alloc_and_copy_f32(packed["k_fp8"])
+    vi_p, _   = alloc_and_copy_u8(packed["v_idx"])
+    vs_p, _   = alloc_and_copy_f32(packed["v_scale"])
+    vz_p, _   = alloc_and_copy_f32(packed["v_zero"])
+
+    NUM_SPLITS = jm.NUM_KV_SPLITS
+    po_size = NUM_SPLITS * N_spec * B_ * Hq * D
+    pl_size = NUM_SPLITS * N_spec * B_ * Hq
+    out_size = N_spec * B_ * Hq * D
+    po_p = jm.alloc_device_f32(po_size)
+    pl_p = jm.alloc_device_f32(pl_size)
+    out_p = jm.alloc_device_f32(out_size)
+
+    # Launch.
+    jm.tq_decode_spec_jm(q_p, kf_p, vi_p, vs_p, vz_p,
+                         po_p, pl_p, out_p,
+                         N_spec, B_, Hq, Hk, D, seqlen,
+                         preset_id, req["causal"], cached_len)
+    jm.synchronize()
+
+    # Copy out.
+    out = np.zeros(out_size, dtype=np.float32)
+    jm.memcpy_from_device_f32(out_p, out)
+    out = out.reshape((N_spec, B_, Hq, D))
+
+    # Free.
+    for p in (q_p, kf_p, vi_p, vs_p, vz_p, po_p, pl_p, out_p):
+        jm.free_device(p)
+    return out
 
 
 def main():
     raw = sys.stdin.read().strip() if len(sys.argv) < 2 else sys.argv[1]
     req = json.loads(raw)
     try:
-        import turboquant_xpu_sycl_jm as jm
-        # For now (Task 4), just attempt to call the (stubbed) kernel; it will
-        # raise "not implemented yet" which propagates as pass=False.
-        jm.tq_decode_spec_jm(
-            0, 0, 0, 0, 0, 0, 0, 0,
-            4, 2, 8, 2, 128, 256,
-            0, 0, 0,
-        )
-        print(json.dumps({"pass": False, "error": "expected runtime_error; none raised"}))
-        return
-    except RuntimeError as e:
-        print(json.dumps({"pass": False, "error": str(e)}))
-        return
+        case = _build_case(req)
+        out_ref = _numpy_reference(case, req)
+        out = _run_kernel(case, req)
+
+        if req["mode"] == "correctness":
+            diff = out - out_ref
+            max_abs = float(np.max(np.abs(diff)))
+            denom = np.maximum(np.abs(out_ref), 1e-6)
+            max_rel = float(np.max(np.abs(diff) / denom))
+            tol_ok = np.allclose(out, out_ref, atol=5e-3, rtol=1e-2)
+            print(json.dumps({
+                "pass": bool(tol_ok),
+                "max_abs_err": max_abs,
+                "max_rel_err": max_rel,
+                "shape": req["shape"],
+                "preset": req["preset"],
+                "causal": req["causal"],
+            }))
+            return
+
+        elif req["mode"] == "bench":
+            # First iter check: do one correctness pass.
+            ok_first = np.allclose(out, out_ref, atol=5e-3, rtol=1e-2)
+            warmup = int(req.get("warmup", 5))
+            n_timed = int(req.get("n_timed", 20))
+
+            # Re-run the kernel n_timed times after warmup, reusing buffers.
+            # For simplicity in phase (a), just re-call _run_kernel (allocs each
+            # time — matches ESIMD bench pattern since zc_scalar also reallocs
+            # nothing in its hot path, but allocs are outside the timed region).
+            import turboquant_xpu_sycl_jm as jm
+            # Build persistent buffers to isolate allocation cost from the timed loop.
+            # (Copy of _run_kernel's setup, timed loop, teardown.)
+            cache = case["cache"]
+            packed = pack_cache_for_kernel(cache)
+            q = case["q"]
+            sh = case["sh"]
+            N_spec, B_, Hq, Hk, D, seqlen = sh["N_spec"], sh["B"], sh["Hq"], sh["Hk"], sh["D"], sh["seqlen"]
+            preset_id = 0 if req["preset"] == "k8v4" else 1
+
+            def _alloc_f32(a):
+                a = np.ascontiguousarray(a, dtype=np.float32)
+                p = jm.alloc_device_f32(a.size); jm.memcpy_to_device_f32(p, a); return p
+            def _alloc_u8(a):
+                a = np.ascontiguousarray(a, dtype=np.uint8)
+                p = jm.alloc_device_u8(a.size); jm.memcpy_to_device_u8(p, a); return p
+
+            q_p  = _alloc_f32(q)
+            kf_p = _alloc_f32(packed["k_fp8"])
+            vi_p = _alloc_u8(packed["v_idx"])
+            vs_p = _alloc_f32(packed["v_scale"])
+            vz_p = _alloc_f32(packed["v_zero"])
+            po_p = jm.alloc_device_f32(jm.NUM_KV_SPLITS * N_spec * B_ * Hq * D)
+            pl_p = jm.alloc_device_f32(jm.NUM_KV_SPLITS * N_spec * B_ * Hq)
+            out_p = jm.alloc_device_f32(N_spec * B_ * Hq * D)
+
+            def _call():
+                jm.tq_decode_spec_jm(q_p, kf_p, vi_p, vs_p, vz_p,
+                                     po_p, pl_p, out_p,
+                                     N_spec, B_, Hq, Hk, D, seqlen,
+                                     preset_id, req["causal"], case["cached_len"])
+                jm.synchronize()
+
+            for _ in range(warmup):
+                _call()
+            t0 = time.perf_counter()
+            for _ in range(n_timed):
+                _call()
+            dt = (time.perf_counter() - t0) / n_timed * 1000.0
+
+            for p in (q_p, kf_p, vi_p, vs_p, vz_p, po_p, pl_p, out_p):
+                jm.free_device(p)
+
+            print(json.dumps({
+                "pass": bool(ok_first),
+                "ms_per_iter": float(dt),
+                "first_iter_check": bool(ok_first),
+                "shape": req["shape"],
+                "preset": req["preset"],
+                "causal": req["causal"],
+            }))
+            return
     except Exception as e:
-        print(json.dumps({"pass": False, "error": f"{type(e).__name__}: {e}"}))
+        import traceback
+        print(json.dumps({
+            "pass": False,
+            "error": f"{type(e).__name__}: {e}",
+            "traceback": traceback.format_exc(),
+        }))
         return
 
 
