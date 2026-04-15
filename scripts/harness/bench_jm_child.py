@@ -185,13 +185,14 @@ def main():
         elif req["mode"] == "bench":
             # First iter check: do one correctness pass.
             ok_first = np.allclose(out, out_ref, atol=5e-3, rtol=1e-2)
+            max_abs_err = float(np.max(np.abs(out - out_ref)))
             warmup = int(req.get("warmup", 5))
             n_timed = int(req.get("n_timed", 20))
 
             # Re-run the kernel n_timed times after warmup, reusing buffers.
-            # For simplicity in phase (a), just re-call _run_kernel (allocs each
-            # time — matches ESIMD bench pattern since zc_scalar also reallocs
-            # nothing in its hot path, but allocs are outside the timed region).
+            # Persistent USM buffers allocated once, reused across warmup + timed
+            # iterations. Matches the ESIMD/zc_scalar bench pattern (allocations
+            # are outside the timed region; only the kernel call is timed).
             import turboquant_xpu_sycl_jm as jm
             # Build persistent buffers to isolate allocation cost from the timed loop.
             # (Copy of _run_kernel's setup, timed loop, teardown.)
@@ -238,6 +239,7 @@ def main():
             print(json.dumps({
                 "pass": bool(ok_first),
                 "ms_per_iter": float(dt),
+                "max_abs_err": max_abs_err,
                 "first_iter_check": bool(ok_first),
                 "shape": req["shape"],
                 "preset": req["preset"],
