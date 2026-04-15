@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Three SYCL attempts on Arc B70: ESIMD, joint_matrix, and the gap to Triton"
-date: 2026-04-15 12:00:00 +0000
+date: 2026-04-15 00:00:00 +0000
 categories: [intel-arc, llm-inference, kernels]
 tags: [sycl, esimd, joint-matrix, dpas, turboquant, bmg-g31, intel-arc-pro-b70]
 ---
