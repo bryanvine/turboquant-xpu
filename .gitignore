@@ -22,6 +22,10 @@ sycl/build/
 *.spv
 .venv-sycl/
 
+# Phase (a) SYCL joint_matrix build artifacts + nightly-env venv
+sycl/jm/build/
+.venv-jm/
+
 # VTune and Proton profiling result directories (large, local only)
 vt-*/
 
