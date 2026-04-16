@@ -648,10 +648,18 @@ class TurboQuantAttentionImpl(AttentionImpl["TurboQuantMetadata"]):
                     #
                     # Looped path: one triton_turboquant_decode_attention call per
                     # query with synthetic seq_lens. This is the original approach.
+                    # Triton's tl.arange requires power-of-2 range, and the
+                    # fused kernel's `n_idx = tl.arange(0, N_SPEC)` fails to
+                    # compile for non-power-of-2 q_len (3, 5, 6, 7). Gate the
+                    # fused dispatch to q_len in {2, 4, 8} and fall through to
+                    # the looped path for the rest. Suffix spec decoding with
+                    # num_speculative_tokens=8 emits q_len=8 in the common
+                    # case, so the gate still covers the primary path.
                     use_fused = (
                         _USE_FUSED_SPEC
                         and _FUSED_SPEC_AVAILABLE
                         and 1 < q_len <= _FUSED_SPEC_MAX_QLEN
+                        and (q_len & (q_len - 1)) == 0
                     )
                     if use_fused:
                         # Reshape: (q_len, Hq, D) -> (N_spec=q_len, B=1, Hq, D)
