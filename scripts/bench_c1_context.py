@@ -134,7 +134,7 @@ def ttft_single_request(
     return -1.0
 
 
-def bench_one_context(endpoint: str, model: str, context_tokens: int, n_prompts: int) -> dict:
+def bench_one_context(endpoint: str, model: str, context_tokens: int, n_prompts: int, skip_ttft: bool = False) -> dict:
     """Run the 16-prompt mix at a given context padding size."""
     padding = synthesize_context_padding(context_tokens)
     results_per_cat = {}
@@ -143,15 +143,16 @@ def bench_one_context(endpoint: str, model: str, context_tokens: int, n_prompts:
 
     prompts_to_run = PROMPTS[:n_prompts]
 
-    # TTFT: measure on the first 5 prompts (streamed)
-    print(f"[{context_tokens}ctx] measuring TTFT on 5 prompts...", flush=True)
-    for cat, prompt in prompts_to_run[:5]:
-        try:
-            ttft = ttft_single_request(endpoint, model, padding, prompt)
-            if ttft > 0:
-                ttfts.append(ttft)
-        except Exception as e:
-            errors.append(f"ttft {cat}: {e}")
+    # TTFT: measure on the first 5 prompts (streamed) unless skipped
+    if not skip_ttft:
+        print(f"[{context_tokens}ctx] measuring TTFT on 5 prompts...", flush=True)
+        for cat, prompt in prompts_to_run[:5]:
+            try:
+                ttft = ttft_single_request(endpoint, model, padding, prompt)
+                if ttft > 0:
+                    ttfts.append(ttft)
+            except Exception as e:
+                errors.append(f"ttft {cat}: {e}")
 
     # Full run: prompts non-streamed, measure tok/s
     print(f"[{context_tokens}ctx] running {len(prompts_to_run)} prompts (non-streamed)...", flush=True)
@@ -207,6 +208,7 @@ def main():
     ap.add_argument("--output", required=True, help="Append results to this file")
     ap.add_argument("--n-prompts", type=int, default=16, help="How many prompts from the 16-set to use")
     ap.add_argument("--probe", action="store_true", help="Probe max context first before sweeping")
+    ap.add_argument("--skip-ttft", action="store_true", help="Skip streaming TTFT measurement")
     args = ap.parse_args()
 
     model_alias = args.model_alias or args.mode
@@ -226,7 +228,7 @@ def main():
 
         for ctx in contexts:
             print(f"\n=== {args.mode} @ {ctx} tokens ===", flush=True)
-            r = bench_one_context(args.endpoint, model_alias, ctx, args.n_prompts)
+            r = bench_one_context(args.endpoint, model_alias, ctx, args.n_prompts, skip_ttft=args.skip_ttft)
             if r.get("failed"):
                 f.write(f"{args.mode}\t{ctx}\tFAILED\t-\t-\t-\t0\t{'; '.join(r.get('errors', []))}\n")
                 continue
