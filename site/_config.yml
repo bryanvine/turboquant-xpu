@@ -1,5 +1,5 @@
 title: turboquant-xpu notes
-email: bryan@bryanvine.com
+email:
 description: >-
   Research notes on LLM inference performance on Intel Arc GPUs.
   Speculative decoding, KV cache quantization, custom kernels.
