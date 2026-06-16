@@ -17,3 +17,10 @@ permalink: /:year/:month/:day/:title/
 minima:
   skin: auto
   social_links: []
+
+# default OG/Twitter preview image (jekyll-seo-tag) for link shares
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /og-turboquant.png
