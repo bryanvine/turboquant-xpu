@@ -7,4 +7,13 @@
   {%- seo -%}
   <link rel="stylesheet" href="{{ "/assets/main.css" | relative_url }}">
   {%- feed_meta -%}
+  <script>
+    // open all off-page links in a new tab; leave in-page anchors (#...) alone
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('a[href]').forEach(function (a) {
+        var h = a.getAttribute('href');
+        if (h && h.charAt(0) !== '#' && !a.target) { a.target = '_blank'; a.rel = 'noopener'; }
+      });
+    });
+  </script>
 </head>
